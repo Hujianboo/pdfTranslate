@@ -53,6 +53,22 @@ def test_matcher_chooses_image_block_on_same_page_by_bbox_similarity():
     assert matches["p1_i1"] == matching_asset
 
 
+def test_matcher_rejects_same_page_asset_with_disjoint_bbox():
+    config = layout_config_from_dict(minimal_layout_dict())
+    unrelated_asset = ExtractedImageAsset(
+        page_number=1,
+        bbox=BBox(x0=10.0, y0=10.0, x1=30.0, y1=30.0),
+        data=b"wrong-image",
+        extension="png",
+        mime_type="image/png",
+        source_id="xref-1",
+    )
+
+    matches = match_image_assets_to_blocks(config, [unrelated_asset])
+
+    assert matches == {}
+
+
 def test_asset_filename_uses_image_block_id():
     config = layout_config_from_dict(minimal_layout_dict())
     image_block = config.pages[0].blocks[1]

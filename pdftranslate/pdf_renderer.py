@@ -30,6 +30,7 @@ NARROW_TEXT_BLOCK_WIDTH = 24.0
 class RenderOptions:
     sample_text: str | None = None
     debug_boxes: bool = False
+    asset_base_dir: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -92,7 +93,7 @@ def build_render_plan(
                     if command.overflow:
                         commands.append(_debug_overflow_label(block.id, block.bbox))
             elif isinstance(block, ImageBlock):
-                commands.append(_image_command(block))
+                commands.append(_image_command(block, options))
                 if options.debug_boxes:
                     commands.extend(_debug_commands(block.id, block.bbox))
             elif isinstance(block, TableBlock):
@@ -325,8 +326,9 @@ def _placeholder_command(
     )
 
 
-def _image_command(block: ImageBlock) -> DrawCommand:
-    if block.image.asset_path and Path(block.image.asset_path).is_file():
+def _image_command(block: ImageBlock, options: RenderOptions) -> DrawCommand:
+    resolved_path = _resolve_asset_path(block.image.asset_path, options.asset_base_dir)
+    if resolved_path is not None:
         x, y, width, height = _rect_from_bbox(block.bbox)
         return DrawCommand(
             kind="image_asset",
@@ -336,9 +338,37 @@ def _image_command(block: ImageBlock) -> DrawCommand:
             width=width,
             height=height,
             image_ref=block.image.ref,
-            image_path=block.image.asset_path,
+            image_path=str(resolved_path),
         )
     return _image_placeholder_command(block)
+
+
+def _resolve_asset_path(
+    asset_path: str | None,
+    base_dir: str | Path | None = None,
+) -> Path | None:
+    if not asset_path:
+        return None
+
+    raw_path = Path(asset_path)
+    if raw_path.is_absolute():
+        return raw_path if raw_path.is_file() else None
+
+    candidates: list[Path] = []
+    if base_dir is not None:
+        candidates.append(Path(base_dir) / raw_path)
+    candidates.append(Path.cwd() / raw_path)
+    candidates.append(raw_path)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _debug_commands(block_id: str, bbox: BBox) -> list[DrawCommand]:

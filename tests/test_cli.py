@@ -364,6 +364,35 @@ def test_render_layout_default_mode_allows_partially_translated_layout(tmp_path)
     assert output_path.stat().st_size > 0
 
 
+def test_render_layout_command_resolves_assets_relative_to_layout_file(tmp_path):
+    layout_dir = tmp_path / "layout"
+    image_dir = layout_dir / "images"
+    image_dir.mkdir(parents=True)
+    image_path = image_dir / "p1_i1.png"
+    image_path.write_bytes(base64.b64decode(_ONE_PIXEL_PNG))
+    input_path = layout_dir / "sample.layout.json"
+    output_path = tmp_path / "rebuilt.pdf"
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][1]["image"]["asset_path"] = "images/p1_i1.png"
+    input_path.write_text(
+        layout_config_from_dict(data).to_json(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "render-layout",
+            str(input_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert output_path.stat().st_size > 0
+
+
 def test_render_layout_command_passes_sample_text_and_debug_options(
     tmp_path,
     monkeypatch,
@@ -551,7 +580,7 @@ def test_extract_images_command_creates_enhanced_layout_and_assets(tmp_path):
     assert exit_code == 0
     assert output_layout.exists()
     assert assets_dir.is_dir()
-    assert data["pages"][0]["blocks"][1]["image"]["asset_path"]
+    assert data["pages"][0]["blocks"][1]["image"]["asset_path"] == "images/p1_i1.png"
 
 
 def test_extract_images_command_rejects_missing_layout_json(tmp_path, capsys):
@@ -576,3 +605,148 @@ def test_extract_images_command_rejects_missing_layout_json(tmp_path, capsys):
     assert exit_code != 0
     assert "layout file not found" in captured.err
     assert not output_layout.exists()
+
+
+def test_prepare_layout_command_creates_layout_with_assets_for_pdf_file(
+    tmp_path,
+    monkeypatch,
+):
+    input_path = tmp_path / "paper.pdf"
+    output_dir = tmp_path / "layouts"
+    assets_dir = tmp_path / "assets"
+    input_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    captured = {}
+
+    def fake_parse(path):
+        captured["parse_path"] = path
+        return layout_config_from_dict(minimal_layout_dict())
+
+    def fake_extract(pdf_path, assets_dir, layout_config, base_dir=None):
+        captured["extract_pdf_path"] = pdf_path
+        captured["extract_assets_dir"] = assets_dir
+        captured["extract_base_dir"] = base_dir
+        return layout_config
+
+    monkeypatch.setattr("pdftranslate.docling_adapter.parse_pdf_layout", fake_parse)
+    monkeypatch.setattr(
+        "pdftranslate.image_assets.extract_pdf_image_assets",
+        fake_extract,
+    )
+
+    exit_code = main(
+        [
+            "prepare-layout",
+            str(input_path),
+            "--output-dir",
+            str(output_dir),
+            "--assets-dir",
+            str(assets_dir),
+        ]
+    )
+
+    output_path = output_dir / "paper.layout.json"
+    assert exit_code == 0
+    assert output_path.exists()
+    assert captured["parse_path"] == input_path
+    assert captured["extract_pdf_path"] == input_path
+    assert captured["extract_assets_dir"] == assets_dir / "paper" / "images"
+    assert captured["extract_base_dir"] == output_dir
+
+
+def test_prepare_layout_command_processes_pdf_directory(tmp_path, monkeypatch):
+    input_dir = tmp_path / "pdfs"
+    output_dir = tmp_path / "layouts"
+    input_dir.mkdir()
+    (input_dir / "a.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    (input_dir / "b.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    (input_dir / "notes.txt").write_text("ignore me", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "pdftranslate.docling_adapter.parse_pdf_layout",
+        lambda path: layout_config_from_dict(minimal_layout_dict()),
+    )
+
+    exit_code = main(
+        [
+            "prepare-layout",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+            "--no-images",
+        ]
+    )
+
+    assert exit_code == 0
+    assert (output_dir / "a.layout.json").exists()
+    assert (output_dir / "b.layout.json").exists()
+    assert not (output_dir / "notes.layout.json").exists()
+
+
+def test_build_pdf_command_uses_default_output_and_requires_translations(tmp_path):
+    input_path = tmp_path / "sample.zh.layout.json"
+    output_dir = tmp_path / "pdf"
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["translated_text"] = "译文"
+    input_path.write_text(
+        layout_config_from_dict(data).to_json(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "build-pdf",
+            str(input_path),
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+
+    output_path = output_dir / "sample.zh.pdf"
+    assert exit_code == 0
+    assert output_path.exists()
+    assert output_path.stat().st_size > 0
+
+
+def test_build_pdf_command_fails_missing_translations_by_default(tmp_path, capsys):
+    input_path = tmp_path / "sample.zh.layout.json"
+    output_dir = tmp_path / "pdf"
+    input_path.write_text(
+        layout_config_from_dict(minimal_layout_dict()).to_json(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "build-pdf",
+            str(input_path),
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code != 0
+    assert "p1_b1" in captured.err
+    assert not (output_dir / "sample.zh.pdf").exists()
+
+
+def test_build_pdf_command_allows_missing_translations_when_requested(tmp_path):
+    input_path = tmp_path / "sample.layout.json"
+    output_dir = tmp_path / "pdf"
+    input_path.write_text(
+        layout_config_from_dict(minimal_layout_dict()).to_json(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "build-pdf",
+            str(input_path),
+            "--output-dir",
+            str(output_dir),
+            "--allow-missing-translations",
+        ]
+    )
+
+    assert exit_code == 0
+    assert (output_dir / "sample.pdf").exists()

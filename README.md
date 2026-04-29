@@ -24,6 +24,48 @@ uv sync
 
 ## 使用方式
 
+### 推荐：手动翻译工作流
+
+当前可以先跳过真实翻译接口，用两条高层命令跑通“解析 -> 手动翻译 -> 重建 PDF”：
+
+```bash
+uv run pdftranslate prepare-layout assets \
+  --output-dir output/layout \
+  --assets-dir output/assets
+```
+
+如果传入的是目录，命令会处理目录下的 `*.pdf`；如果传入的是单个 PDF，则只处理该文件。输出文件名为：
+
+```text
+output/layout/<pdf-name>.layout.json
+```
+
+同时会提取可匹配的图片资产，并把 `image.asset_path` 写成相对 layout 文件所在目录的路径，后续换目录执行也更稳。
+
+你可以把完成中文译文的 layout 命名为：
+
+```text
+output/layout/<pdf-name>.zh.layout.json
+```
+
+然后生成最终 PDF：
+
+```bash
+uv run pdftranslate build-pdf output/layout/<pdf-name>.zh.layout.json \
+  --output-dir output/pdf
+```
+
+默认情况下，`build-pdf` 会要求所有 `translatable=true` 的 text block 都有非空 `translated_text`。如果只是调试半成品 layout，可以加：
+
+```bash
+uv run pdftranslate build-pdf output/layout/<pdf-name>.zh.layout.json \
+  --output-dir output/pdf \
+  --allow-missing-translations \
+  --debug-boxes
+```
+
+底层命令仍然保留，适合单步排查问题。
+
 ### 1. 提取 Markdown 文本
 
 ```bash
@@ -157,7 +199,7 @@ uv run pdftranslate parse-layout assets/1603.08767v1.pdf --output assets/1603.08
 完整字段说明见：
 
 ```text
-openspec/changes/parse-pdf-to-layout-config/layout-config-schema.md
+openspec/specs/pdf-layout-config/spec.md
 ```
 
 ### 3. 提取图片资产并写回 LayoutConfig
@@ -176,7 +218,7 @@ uv run pdftranslate extract-images assets/1603.08767v1.pdf \
 - 从原 PDF 中提取可用的嵌入图片。
 - 保存到 `--assets-dir` 指定的目录。
 - 尽量按页面和 bbox 与现有 image block 匹配。
-- 在增强版 layout JSON 中写入相对路径 `image.asset_path`。
+- 在增强版 layout JSON 中写入相对 `--output-layout` 所在目录的 `image.asset_path`。
 
 如果某个图片块没有匹配到可提取图片，会保留原有 `ref`、尺寸和 `mime_type`，后续渲染时仍显示占位框。
 
@@ -225,6 +267,15 @@ uv run pdftranslate render-layout output/layout/1603.08767v1.translated.layout.j
   --output output/pdf/1603.08767v1.translated.rebuilt.pdf \
   --require-translations \
   --debug-boxes
+```
+
+如果 layout 里的 `image.asset_path` 不是相对 layout 文件所在目录的路径，可以用 `--asset-base-dir` 指定图片路径解析基准：
+
+```bash
+uv run pdftranslate render-layout output/layout/1603.08767v1.translated.layout.json \
+  --output output/pdf/1603.08767v1.translated.rebuilt.pdf \
+  --require-translations \
+  --asset-base-dir .
 ```
 
 最终导出翻译版 PDF 时建议加 `--require-translations`。该选项会检查所有 `translatable=true` 的文本块都包含非空 `translated_text`；如果缺失译文，命令会在生成 PDF 前失败，并在 stderr 中列出缺失的 block id。调试半成品 layout 时可以不加这个选项，渲染器会继续使用原文或样本文本回退规则。

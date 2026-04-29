@@ -321,6 +321,26 @@ def test_image_asset_path_maps_to_real_image_draw_command(tmp_path):
     assert image_commands[0].image_path == str(image_path)
 
 
+def test_relative_image_asset_path_resolves_against_asset_base_dir(tmp_path):
+    image_path = tmp_path / "images" / "p1_i1.png"
+    image_path.parent.mkdir()
+    image_path.write_bytes(b"fake-image")
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][1]["image"]["asset_path"] = "images/p1_i1.png"
+    config = layout_config_from_dict(data)
+
+    plan = build_render_plan(config, RenderOptions(asset_base_dir=tmp_path))
+
+    image_commands = [
+        command
+        for page in plan.pages
+        for command in page.commands
+        if command.kind == "image_asset"
+    ]
+    assert len(image_commands) == 1
+    assert image_commands[0].image_path == str(image_path)
+
+
 def test_nonexistent_image_asset_path_falls_back_to_placeholder(tmp_path):
     data = minimal_layout_dict()
     data["pages"][0]["blocks"][1]["image"]["asset_path"] = str(

@@ -10,6 +10,10 @@ from pdftranslate.layout import BBox
 from pdftranslate.layout import ImageBlock, ImageInfo, LayoutConfig, PageLayout
 
 
+MIN_IMAGE_MATCH_IOU = 0.01
+MAX_IMAGE_MATCH_CENTER_DISTANCE = 24.0
+
+
 @dataclass(frozen=True)
 class ExtractedImageAsset:
     page_number: int
@@ -102,7 +106,10 @@ def match_image_assets_to_blocks(
                 best_score = score
                 best_index = index
 
-        if best_index is not None:
+        if best_index is not None and _is_acceptable_match(
+            block.bbox,
+            assets[best_index].bbox,
+        ):
             used_asset_indexes.add(best_index)
             matches[block.id] = assets[best_index]
 
@@ -191,6 +198,13 @@ def _page_with_blocks(page: PageLayout, blocks: list[object]) -> PageLayout:
 def _match_score(left: BBox, right: BBox) -> float:
     iou = _bbox_iou(left, right)
     return (1.0 - iou) + (_center_distance(left, right) / 10000.0)
+
+
+def _is_acceptable_match(left: BBox, right: BBox) -> bool:
+    return (
+        _bbox_iou(left, right) >= MIN_IMAGE_MATCH_IOU
+        or _center_distance(left, right) <= MAX_IMAGE_MATCH_CENTER_DISTANCE
+    )
 
 
 def _bbox_iou(left: BBox, right: BBox) -> float:
