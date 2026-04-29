@@ -6,10 +6,15 @@ from typing import Any
 
 from pdftranslate.layout import (
     BBox,
+    FormulaBlock,
+    FormulaInfo,
     ImageBlock,
     ImageInfo,
     LayoutConfig,
     PageLayout,
+    TableBlock,
+    TableCellInfo,
+    TableInfo,
     TextBlock,
     TextStyle,
 )
@@ -42,7 +47,9 @@ def _page_from_dict(data: dict[str, Any]) -> PageLayout:
     )
 
 
-def _block_from_dict(data: dict[str, Any]) -> TextBlock | ImageBlock:
+def _block_from_dict(
+    data: dict[str, Any],
+) -> TextBlock | ImageBlock | TableBlock | FormulaBlock:
     kind = data["kind"]
     if kind == "text":
         return TextBlock(
@@ -67,6 +74,21 @@ def _block_from_dict(data: dict[str, Any]) -> TextBlock | ImageBlock:
                 asset_path=image_data.get("asset_path"),
             ),
         )
+    if kind == "table":
+        return TableBlock(
+            id=str(data["id"]),
+            page_number=int(data["page_number"]),
+            bbox=_bbox_from_dict(data["bbox"]),
+            table=_table_info_from_dict(data.get("table", {})),
+        )
+    if kind == "formula":
+        return FormulaBlock(
+            id=str(data["id"]),
+            page_number=int(data["page_number"]),
+            bbox=_bbox_from_dict(data["bbox"]),
+            formula=_formula_info_from_dict(data.get("formula", {})),
+            translatable=bool(data.get("translatable", False)),
+        )
     raise ValueError(f"unsupported block kind: {kind}")
 
 
@@ -87,3 +109,46 @@ def _text_style_from_dict(data: dict[str, Any]) -> TextStyle:
         color=data.get("color"),
         rotation=int(data.get("rotation", 0)),
     )
+
+
+def _table_info_from_dict(data: dict[str, Any]) -> TableInfo:
+    return TableInfo(
+        num_rows=int(data.get("num_rows", 0)),
+        num_cols=int(data.get("num_cols", 0)),
+        cells=[_table_cell_from_dict(cell) for cell in data.get("cells", [])],
+        ref=data.get("ref"),
+        caption=data.get("caption"),
+    )
+
+
+def _table_cell_from_dict(data: dict[str, Any]) -> TableCellInfo:
+    row_start = int(data.get("row_start", 0))
+    col_start = int(data.get("col_start", 0))
+    row_span = int(data.get("row_span", 1))
+    col_span = int(data.get("col_span", 1))
+    return TableCellInfo(
+        text=str(data.get("text", "")),
+        row_start=row_start,
+        row_end=int(data.get("row_end", row_start + row_span)),
+        col_start=col_start,
+        col_end=int(data.get("col_end", col_start + col_span)),
+        row_span=row_span,
+        col_span=col_span,
+        column_header=bool(data.get("column_header", False)),
+        row_header=bool(data.get("row_header", False)),
+        bbox=_optional_bbox_from_dict(data.get("bbox")),
+    )
+
+
+def _formula_info_from_dict(data: dict[str, Any]) -> FormulaInfo:
+    return FormulaInfo(
+        text=data.get("text"),
+        ref=data.get("ref"),
+        formula_type=data.get("formula_type"),
+    )
+
+
+def _optional_bbox_from_dict(data: dict[str, Any] | None) -> BBox | None:
+    if data is None:
+        return None
+    return _bbox_from_dict(data)

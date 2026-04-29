@@ -3,7 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pdftranslate.layout import BBox, ImageBlock, LayoutConfig, TextBlock
+from pdftranslate.layout import (
+    BBox,
+    FormulaBlock,
+    ImageBlock,
+    LayoutConfig,
+    TableBlock,
+    TextBlock,
+)
 
 
 ZH_SAMPLE_TEXTS = (
@@ -62,6 +69,14 @@ def build_render_plan(
                 commands.append(_image_command(block))
                 if options.debug_boxes:
                     commands.extend(_debug_commands(block.id, block.bbox))
+            elif isinstance(block, TableBlock):
+                commands.append(_table_placeholder_command(block))
+                if options.debug_boxes:
+                    commands.extend(_debug_commands(block.id, block.bbox))
+            elif isinstance(block, FormulaBlock):
+                commands.append(_formula_placeholder_command(block))
+                if options.debug_boxes:
+                    commands.extend(_debug_commands(block.id, block.bbox))
         pages.append(
             PageRenderPlan(
                 page_number=page.page_number,
@@ -95,7 +110,7 @@ def render_layout_pdf(
 
 
 def _execute_command(pdf, command: DrawCommand) -> None:
-    from reportlab.lib.colors import Color, black, blue, lightgrey, red
+    from reportlab.lib.colors import black, blue, red
 
     if command.kind == "text":
         pdf.setFillColor(black)
@@ -112,20 +127,12 @@ def _execute_command(pdf, command: DrawCommand) -> None:
                 preserveAspectRatio=False,
                 mask="auto",
             )
-    elif command.kind == "image_placeholder":
-        pdf.setStrokeColor(lightgrey)
-        pdf.setFillColor(Color(0.95, 0.95, 0.95))
-        pdf.rect(command.x, command.y, command.width, command.height, fill=1)
-        pdf.setStrokeColor(lightgrey)
-        pdf.line(command.x, command.y, command.x + command.width, command.y + command.height)
-        pdf.line(command.x, command.y + command.height, command.x + command.width, command.y)
-        pdf.setFillColor(black)
-        pdf.setFont("Helvetica", 6)
-        pdf.drawString(
-            command.x + 2,
-            command.y + max(command.height / 2, 8),
-            command.image_ref or command.block_id,
-        )
+    elif command.kind in {
+        "image_placeholder",
+        "table_placeholder",
+        "formula_placeholder",
+    }:
+        _draw_placeholder(pdf, command)
     elif command.kind == "debug_box":
         pdf.setStrokeColor(red)
         pdf.rect(command.x, command.y, command.width, command.height, fill=0)
@@ -195,15 +202,50 @@ def _trailing_number(value: str) -> int:
 
 
 def _image_placeholder_command(block: ImageBlock) -> DrawCommand:
-    x, y, width, height = _rect_from_bbox(block.bbox)
-    return DrawCommand(
-        kind="image_placeholder",
+    return _placeholder_command(
         block_id=block.id,
+        bbox=block.bbox,
+        kind="image_placeholder",
+        text=block.image.ref,
+        image_ref=block.image.ref,
+    )
+
+
+def _table_placeholder_command(block: TableBlock) -> DrawCommand:
+    return _placeholder_command(
+        block_id=block.id,
+        bbox=block.bbox,
+        kind="table_placeholder",
+        text=block.id,
+    )
+
+
+def _formula_placeholder_command(block: FormulaBlock) -> DrawCommand:
+    return _placeholder_command(
+        block_id=block.id,
+        bbox=block.bbox,
+        kind="formula_placeholder",
+        text=block.id,
+    )
+
+
+def _placeholder_command(
+    block_id: str,
+    bbox: BBox,
+    kind: str,
+    text: str | None = None,
+    image_ref: str | None = None,
+) -> DrawCommand:
+    x, y, width, height = _rect_from_bbox(bbox)
+    return DrawCommand(
+        kind=kind,
+        block_id=block_id,
         x=x,
         y=y,
         width=width,
         height=height,
-        image_ref=block.image.ref,
+        text=text,
+        image_ref=image_ref,
     )
 
 
@@ -248,3 +290,21 @@ def _debug_commands(block_id: str, bbox: BBox) -> list[DrawCommand]:
 
 def _rect_from_bbox(bbox: BBox) -> tuple[float, float, float, float]:
     return bbox.x0, bbox.y0, bbox.x1 - bbox.x0, bbox.y1 - bbox.y0
+
+
+def _draw_placeholder(pdf, command: DrawCommand) -> None:
+    from reportlab.lib.colors import Color, black, lightgrey
+
+    pdf.setStrokeColor(lightgrey)
+    pdf.setFillColor(Color(0.95, 0.95, 0.95))
+    pdf.rect(command.x, command.y, command.width, command.height, fill=1)
+    pdf.setStrokeColor(lightgrey)
+    pdf.line(command.x, command.y, command.x + command.width, command.y + command.height)
+    pdf.line(command.x, command.y + command.height, command.x + command.width, command.y)
+    pdf.setFillColor(black)
+    pdf.setFont("Helvetica", 6)
+    pdf.drawString(
+        command.x + 2,
+        command.y + max(command.height / 2, 8),
+        command.text or command.image_ref or command.block_id,
+    )

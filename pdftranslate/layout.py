@@ -102,6 +102,112 @@ class ImageBlock:
 
 
 @dataclass(frozen=True)
+class TableCellInfo:
+    text: str = ""
+    row_start: int = 0
+    row_end: int = 1
+    col_start: int = 0
+    col_end: int = 1
+    row_span: int = 1
+    col_span: int = 1
+    column_header: bool = False
+    row_header: bool = False
+    bbox: BBox | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "text": self.text,
+            "row_start": self.row_start,
+            "row_end": self.row_end,
+            "col_start": self.col_start,
+            "col_end": self.col_end,
+            "row_span": self.row_span,
+            "col_span": self.col_span,
+            "column_header": self.column_header,
+            "row_header": self.row_header,
+        }
+        if self.bbox is not None:
+            data["bbox"] = self.bbox.to_dict()
+        return data
+
+
+@dataclass(frozen=True)
+class TableInfo:
+    num_rows: int
+    num_cols: int
+    cells: list[TableCellInfo] = field(default_factory=list)
+    ref: str | None = None
+    caption: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "num_rows": self.num_rows,
+            "num_cols": self.num_cols,
+            "cells": [cell.to_dict() for cell in self.cells],
+        }
+        if self.ref is not None:
+            data["ref"] = self.ref
+        if self.caption is not None:
+            data["caption"] = self.caption
+        return data
+
+
+@dataclass(frozen=True)
+class TableBlock:
+    id: str
+    page_number: int
+    bbox: BBox
+    table: TableInfo
+    kind: str = "table"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "page_number": self.page_number,
+            "bbox": self.bbox.to_dict(),
+            "table": self.table.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class FormulaInfo:
+    text: str | None = None
+    ref: str | None = None
+    formula_type: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {}
+        if self.text is not None:
+            data["text"] = self.text
+        if self.ref is not None:
+            data["ref"] = self.ref
+        if self.formula_type is not None:
+            data["formula_type"] = self.formula_type
+        return data
+
+
+@dataclass(frozen=True)
+class FormulaBlock:
+    id: str
+    page_number: int
+    bbox: BBox
+    formula: FormulaInfo
+    translatable: bool = False
+    kind: str = "formula"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "page_number": self.page_number,
+            "bbox": self.bbox.to_dict(),
+            "formula": self.formula.to_dict(),
+            "translatable": self.translatable,
+        }
+
+
+@dataclass(frozen=True)
 class PageLayout:
     page_number: int
     width: float

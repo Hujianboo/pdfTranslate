@@ -28,3 +28,20 @@ def test_layout_config_schema_document_covers_required_fields():
         "edited_image",
     ):
         assert required_term in content
+
+
+def test_readme_documents_table_and_formula_layout_contract():
+    project_root = Path(__file__).resolve().parents[1]
+    content = (project_root / "README.md").read_text(encoding="utf-8")
+
+    for required_term in (
+        "`kind`: `table`",
+        "`table.num_rows`",
+        "`table.num_cols`",
+        "`table.cells`",
+        "`kind`: `formula`",
+        "`formula.text`",
+        "`formula.ref`",
+        "`translatable`: `false`",
+    ):
+        assert required_term in content

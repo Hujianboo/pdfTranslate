@@ -5,9 +5,9 @@
 ## 当前能力
 
 - `extract`：用 PDFium 提取 PDF 文本并输出 Markdown。
-- `parse-layout`：用 Docling 解析 PDF 版面，并输出 JSON 格式的 `LayoutConfig`。
+- `parse-layout`：用 Docling 解析 PDF 版面，并输出 JSON 格式的 `LayoutConfig`；当 Docling 检出表格或公式时，会输出 `table` / `formula` block。
 - `extract-images`：从原 PDF 提取可用图片资产，并把 `image.asset_path` 写回增强版 `LayoutConfig`。
-- `render-layout`：用 `LayoutConfig` 重建 PDF；图片块有有效 `asset_path` 时会回填真实图片，否则保留占位框。
+- `render-layout`：用 `LayoutConfig` 重建 PDF；图片块有有效 `asset_path` 时会回填真实图片，否则保留占位框；表格和公式当前以可调试占位框渲染。
 - 默认不处理扫描版 PDF，也不会开启 OCR。
 - 目前不会输出译文，也不会处理图片内容编辑。
 
@@ -37,7 +37,7 @@ uv run pdftranslate extract assets/1603.08767v1.pdf --output sample.md
 uv run pdftranslate parse-layout assets/1603.08767v1.pdf --output assets/1603.08767v1.layout.json
 ```
 
-输出文件是 JSON，里面包含页面尺寸、文本块、图片块、坐标和基础样式占位信息。后续 AI 翻译阶段会优先消费这个结构，而不是直接消费 Docling 的内部对象。
+输出文件是 JSON，里面包含页面尺寸、文本块、图片块、表格块、公式块、坐标和基础样式占位信息。后续 AI 翻译阶段会优先消费这个结构，而不是直接消费 Docling 的内部对象。
 
 一个简化后的输出形状如下：
 
@@ -92,6 +92,50 @@ uv run pdftranslate parse-layout assets/1603.08767v1.pdf --output assets/1603.08
             "mime_type": null,
             "asset_path": "output/assets/1603.08767v1/images/p1_i1.png"
           }
+        },
+        {
+          "id": "p1_t1",
+          "kind": "table",
+          "page_number": 1,
+          "bbox": {
+            "x0": 72.0,
+            "y0": 300.0,
+            "x1": 540.0,
+            "y1": 520.0
+          },
+          "table": {
+            "num_rows": 2,
+            "num_cols": 2,
+            "cells": [
+              {
+                "text": "Header",
+                "row_start": 0,
+                "row_end": 1,
+                "col_start": 0,
+                "col_end": 1,
+                "row_span": 1,
+                "col_span": 1,
+                "column_header": true,
+                "row_header": false
+              }
+            ]
+          }
+        },
+        {
+          "id": "p1_f1",
+          "kind": "formula",
+          "page_number": 1,
+          "bbox": {
+            "x0": 180.0,
+            "y0": 420.0,
+            "x1": 432.0,
+            "y1": 456.0
+          },
+          "formula": {
+            "text": "E=mc^2",
+            "ref": "#/texts/1"
+          },
+          "translatable": false
         }
       ],
       "warnings": []
@@ -99,6 +143,15 @@ uv run pdftranslate parse-layout assets/1603.08767v1.pdf --output assets/1603.08
   ]
 }
 ```
+
+表格和公式字段约定：
+
+- `kind`: `table` 表示表格块，bbox 覆盖 Docling 识别到的表格区域。
+- `table.num_rows` / `table.num_cols` 保存表格行列数。
+- `table.cells` 保存单元格文本、行列范围、跨行跨列、表头标记和可选单元格 bbox。
+- `kind`: `formula` 表示公式块，默认保护为非普通翻译文本。
+- `formula.text` 保存 Docling 提供的公式文本；如果没有可用文本，`formula.ref` 保存来源引用。
+- `translatable`: `false` 表示公式块不会被当作普通文本块翻译。
 
 完整字段说明见：
 
@@ -143,7 +196,7 @@ uv run pdftranslate render-layout output/layout/1603.08767v1.with-images.layout.
   --debug-boxes
 ```
 
-当前重建目标是验证页面尺寸、坐标方向、文本块位置和图片大体位置。表格、公式、矢量图形和复杂排版还没有进入稳定重建阶段。
+当前重建目标是验证页面尺寸、坐标方向、文本块位置、图片大体位置，以及表格/公式占位框是否覆盖正确区域。表格边框、公式排版、矢量图形和复杂排版还没有进入稳定重建阶段。
 
 ## 当前设计为什么代码不多
 
@@ -162,7 +215,8 @@ uv run pdftranslate render-layout output/layout/1603.08767v1.with-images.layout.
 - 只面向普通文本型 PDF。
 - 扫描版 PDF/OCR 暂不支持。
 - style 目前只保留字段占位，无法可靠取得的值为 `null`。
-- 图片资产提取只覆盖 PDF 中可直接提取的 raster image；矢量图、公式和表格可能仍显示为占位或普通文本块。
+- 图片资产提取只覆盖 PDF 中可直接提取的 raster image；矢量图仍可能显示为占位或普通文本块。
+- 表格和公式依赖 Docling 的识别结果；当前会进入 `LayoutConfig`，但重建 PDF 时仍以占位框表示，还不会恢复表格边框、公式字体或数学排版细节。
 - 还没有接入 AI 翻译；当前 PDF 重建仍是验证性输出，不保证像素级一致。
 
 ## 测试

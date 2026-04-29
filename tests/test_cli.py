@@ -12,7 +12,7 @@ from pdftranslate.layout import (
     PageLayout,
     TextBlock,
 )
-from tests.fixtures import minimal_layout_dict
+from tests.fixtures import layout_dict_with_all_block_kinds, minimal_layout_dict
 
 
 _ONE_PIXEL_PNG = (
@@ -211,6 +211,34 @@ def test_parse_layout_command_outputs_layout_schema_contract(tmp_path, monkeypat
     image_block = data["pages"][0]["blocks"][1]
     assert {"text", "style", "translatable"}.issubset(text_block)
     assert {"ref", "width", "height", "mime_type"} == set(image_block["image"])
+
+
+def test_parse_layout_command_outputs_table_and_formula_blocks(tmp_path, monkeypatch):
+    input_path = tmp_path / "sample.pdf"
+    output_path = tmp_path / "layout.json"
+    input_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    monkeypatch.setattr(
+        "pdftranslate.docling_adapter.parse_pdf_layout",
+        lambda path: layout_config_from_dict(layout_dict_with_all_block_kinds()),
+    )
+
+    exit_code = main(
+        [
+            "parse-layout",
+            str(input_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    data = json.loads(output_path.read_text(encoding="utf-8"))
+    blocks = data["pages"][0]["blocks"]
+    table_block = next(block for block in blocks if block["kind"] == "table")
+    formula_block = next(block for block in blocks if block["kind"] == "formula")
+    assert exit_code == 0
+    assert table_block["table"]["cells"][0]["text"] == "Header"
+    assert formula_block["formula"]["text"] == "E=mc^2"
+    assert formula_block["translatable"] is False
 
 
 def test_render_layout_command_creates_non_empty_pdf(tmp_path):

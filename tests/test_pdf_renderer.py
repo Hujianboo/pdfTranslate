@@ -2,7 +2,7 @@ import base64
 
 from pdftranslate.layout_io import layout_config_from_dict
 from pdftranslate.pdf_renderer import RenderOptions, build_render_plan, render_layout_pdf
-from tests.fixtures import minimal_layout_dict
+from tests.fixtures import layout_dict_with_all_block_kinds, minimal_layout_dict
 
 
 _ONE_PIXEL_PNG = (
@@ -105,6 +105,69 @@ def test_debug_boxes_generate_box_and_label_for_each_block():
     assert [command.text for command in debug_labels] == ["p1_b1", "p1_i1"]
 
 
+def test_table_block_bbox_maps_to_table_placeholder_command():
+    config = layout_config_from_dict(layout_dict_with_all_block_kinds())
+
+    plan = build_render_plan(config)
+
+    table_commands = [
+        command
+        for page in plan.pages
+        for command in page.commands
+        if command.kind == "table_placeholder"
+    ]
+    assert len(table_commands) == 1
+    command = table_commands[0]
+    assert command.block_id == "p1_t1"
+    assert command.x == 72.0
+    assert command.y == 300.0
+    assert command.width == 468.0
+    assert command.height == 220.0
+
+
+def test_formula_block_bbox_maps_to_formula_placeholder_command():
+    config = layout_config_from_dict(layout_dict_with_all_block_kinds())
+
+    plan = build_render_plan(config)
+
+    formula_commands = [
+        command
+        for page in plan.pages
+        for command in page.commands
+        if command.kind == "formula_placeholder"
+    ]
+    assert len(formula_commands) == 1
+    command = formula_commands[0]
+    assert command.block_id == "p1_f1"
+    assert command.x == 180.0
+    assert command.y == 420.0
+    assert command.width == 252.0
+    assert command.height == 36.0
+
+
+def test_debug_boxes_generate_box_and_label_for_all_block_kinds():
+    config = layout_config_from_dict(layout_dict_with_all_block_kinds())
+
+    plan = build_render_plan(config, RenderOptions(debug_boxes=True))
+
+    commands = [command for page in plan.pages for command in page.commands]
+    debug_boxes = [command for command in commands if command.kind == "debug_box"]
+    debug_labels = [command for command in commands if command.kind == "debug_label"]
+
+    assert [command.block_id for command in debug_boxes] == [
+        "p1_b1",
+        "p1_i1",
+        "p1_t1",
+        "p1_f1",
+    ]
+    assert [command.text for command in debug_labels] == [
+        "p1_b1",
+        "p1_i1",
+        "p1_t1",
+        "p1_f1",
+    ]
+
+
 def test_zh_sample_text_replaces_original_text_but_keeps_block_id():
     config = layout_config_from_dict(minimal_layout_dict())
 
@@ -181,3 +244,27 @@ def test_render_layout_pdf_writes_image_resource_for_asset_path(tmp_path):
     resources = PdfReader(output_path).pages[0].get("/Resources")
     assert resources is not None
     assert "/XObject" in resources
+
+
+def test_render_layout_pdf_writes_table_placeholder_id(tmp_path):
+    from pypdf import PdfReader
+
+    config = layout_config_from_dict(layout_dict_with_all_block_kinds())
+    output_path = tmp_path / "rebuilt-table.pdf"
+
+    render_layout_pdf(config, output_path)
+
+    page_text = PdfReader(output_path).pages[0].extract_text()
+    assert "p1_t1" in page_text
+
+
+def test_render_layout_pdf_writes_formula_placeholder_id(tmp_path):
+    from pypdf import PdfReader
+
+    config = layout_config_from_dict(layout_dict_with_all_block_kinds())
+    output_path = tmp_path / "rebuilt-formula.pdf"
+
+    render_layout_pdf(config, output_path)
+
+    page_text = PdfReader(output_path).pages[0].extract_text()
+    assert "p1_f1" in page_text
