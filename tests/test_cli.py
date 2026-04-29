@@ -308,6 +308,120 @@ def test_render_layout_command_passes_sample_text_and_debug_options(
     }
 
 
+def test_translate_layout_command_with_mock_provider_writes_translated_json(tmp_path):
+    input_path = tmp_path / "sample.layout.json"
+    output_path = tmp_path / "sample.translated.layout.json"
+    input_path.write_text(
+        layout_config_from_dict(minimal_layout_dict()).to_json(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "translate-layout",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--provider",
+            "mock",
+        ]
+    )
+
+    data = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert data["pages"][0]["blocks"][0]["translated_text"] == "[zh] Original text"
+    assert "translated_text" not in data["pages"][0]["blocks"][1]
+
+
+def test_translate_layout_command_defaults_target_language_to_zh(tmp_path):
+    input_path = tmp_path / "sample.layout.json"
+    output_path = tmp_path / "sample.translated.layout.json"
+    input_path.write_text(
+        layout_config_from_dict(minimal_layout_dict()).to_json(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "translate-layout",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--provider",
+            "mock",
+        ]
+    )
+
+    data = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert data["pages"][0]["blocks"][0]["translated_text"].startswith("[zh]")
+
+
+def test_translate_layout_command_openai_without_key_exits_nonzero(
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    input_path = tmp_path / "sample.layout.json"
+    output_path = tmp_path / "sample.translated.layout.json"
+    input_path.write_text(
+        layout_config_from_dict(minimal_layout_dict()).to_json(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "translate-layout",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--provider",
+            "openai",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code != 0
+    assert "KEY" in captured.err
+    assert "OPENAI_API_KEY" in captured.err
+    assert not output_path.exists()
+
+
+def test_non_translation_cli_commands_do_not_require_translation_env(
+    tmp_path,
+    monkeypatch,
+):
+    input_path = tmp_path / "sample.layout.json"
+    output_path = tmp_path / "rebuilt.pdf"
+    input_path.write_text(
+        layout_config_from_dict(minimal_layout_dict()).to_json(),
+        encoding="utf-8",
+    )
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("translation provider should not be created")
+
+    monkeypatch.setattr(
+        "pdftranslate.translation.create_translation_provider",
+        fail_if_called,
+    )
+
+    exit_code = main(
+        [
+            "render-layout",
+            str(input_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.exists()
+
+
 def test_extract_images_command_creates_enhanced_layout_and_assets(tmp_path):
     input_path = tmp_path / "with-image.pdf"
     layout_path = tmp_path / "sample.layout.json"

@@ -49,10 +49,11 @@ class TextBlock:
     bbox: BBox
     style: TextStyle = field(default_factory=TextStyle)
     translatable: bool = True
+    translated_text: str | None = None
     kind: str = "text"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "id": self.id,
             "kind": self.kind,
             "page_number": self.page_number,
@@ -61,6 +62,9 @@ class TextBlock:
             "style": self.style.to_dict(),
             "translatable": self.translatable,
         }
+        if self.translated_text is not None:
+            data["translated_text"] = self.translated_text
+        return data
 
 
 @dataclass(frozen=True)

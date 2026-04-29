@@ -186,6 +186,8 @@ def _text_command(block: TextBlock, options: RenderOptions) -> DrawCommand:
 
 
 def _text_for_block(block: TextBlock, options: RenderOptions) -> str:
+    if block.translated_text:
+        return block.translated_text
     if options.sample_text == "zh":
         index = max(_trailing_number(block.id) - 1, 0)
         return ZH_SAMPLE_TEXTS[index % len(ZH_SAMPLE_TEXTS)]

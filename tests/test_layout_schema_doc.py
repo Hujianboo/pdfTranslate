@@ -45,3 +45,19 @@ def test_readme_documents_table_and_formula_layout_contract():
         "`translatable`: `false`",
     ):
         assert required_term in content
+
+
+def test_readme_documents_translate_layout_provider_usage():
+    project_root = Path(__file__).resolve().parents[1]
+    content = (project_root / "README.md").read_text(encoding="utf-8")
+
+    for required_term in (
+        "translate-layout",
+        "--provider mock",
+        "--provider openai",
+        "BASE_URL",
+        "KEY",
+        "MODEL",
+        "OPENAI_API_KEY",
+    ):
+        assert required_term in content

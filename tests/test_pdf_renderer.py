@@ -32,6 +32,22 @@ def test_text_block_bbox_maps_to_text_draw_command():
     assert command.text == "Original text"
 
 
+def test_translated_text_takes_priority_over_original_text():
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["translated_text"] = "译文"
+    config = layout_config_from_dict(data)
+
+    plan = build_render_plan(config, RenderOptions(sample_text="zh"))
+
+    text_commands = [
+        command
+        for page in plan.pages
+        for command in page.commands
+        if command.kind == "text"
+    ]
+    assert text_commands[0].text == "译文"
+
+
 def test_image_block_bbox_maps_to_placeholder_draw_command():
     config = layout_config_from_dict(minimal_layout_dict())
 

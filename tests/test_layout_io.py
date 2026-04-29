@@ -33,6 +33,20 @@ def test_layout_config_from_dict_builds_pages_text_and_image_blocks():
     assert page.blocks[1].image.ref == "p1_i1"
 
 
+def test_layout_config_from_dict_reads_and_round_trips_translated_text():
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["translated_text"] = "译文"
+
+    config = layout_config_from_dict(data)
+    serialized = config.to_dict()
+
+    text_block = config.pages[0].blocks[0]
+    assert isinstance(text_block, TextBlock)
+    assert text_block.text == "Original text"
+    assert text_block.translated_text == "译文"
+    assert serialized["pages"][0]["blocks"][0]["translated_text"] == "译文"
+
+
 def test_load_layout_config_reads_utf8_json_file(tmp_path):
     input_path = tmp_path / "sample.layout.json"
     input_path.write_text(

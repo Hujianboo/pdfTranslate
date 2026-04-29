@@ -59,6 +59,7 @@ def _block_from_dict(
             bbox=_bbox_from_dict(data["bbox"]),
             style=_text_style_from_dict(data.get("style", {})),
             translatable=bool(data.get("translatable", True)),
+            translated_text=data.get("translated_text"),
         )
     if kind == "image":
         image_data = data["image"]

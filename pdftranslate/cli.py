@@ -30,6 +30,12 @@ def build_parser() -> ArgumentParser:
     render_layout_parser.add_argument("--sample-text", choices=["zh"])
     render_layout_parser.add_argument("--debug-boxes", action="store_true")
 
+    translate_layout_parser = subparsers.add_parser("translate-layout")
+    translate_layout_parser.add_argument("input_layout_json")
+    translate_layout_parser.add_argument("--output", required=True)
+    translate_layout_parser.add_argument("--provider", default="openai")
+    translate_layout_parser.add_argument("--target-language", default="zh")
+
     return parser
 
 
@@ -91,6 +97,37 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.output),
             RenderOptions(sample_text=args.sample_text, debug_boxes=args.debug_boxes),
         )
+        return 0
+
+    if args.command == "translate-layout":
+        input_path = _existing_input_path(args.input_layout_json)
+        if input_path is None:
+            return 1
+
+        from pdftranslate.layout_io import load_layout_config
+        from pdftranslate.translation import (
+            MissingProviderCredentials,
+            TranslationError,
+            create_translation_provider,
+            translate_layout_config,
+        )
+
+        try:
+            provider = create_translation_provider(args.provider)
+            config = load_layout_config(input_path)
+            translated = translate_layout_config(
+                config,
+                provider,
+                target_language=args.target_language,
+            )
+        except MissingProviderCredentials as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        except TranslationError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+
+        _write_text_output(args.output, translated.to_json())
         return 0
 
     parser.error(f"unknown command: {args.command}")

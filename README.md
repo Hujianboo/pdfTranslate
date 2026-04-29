@@ -7,6 +7,7 @@
 - `extract`：用 PDFium 提取 PDF 文本并输出 Markdown。
 - `parse-layout`：用 Docling 解析 PDF 版面，并输出 JSON 格式的 `LayoutConfig`；当 Docling 检出表格或公式时，会输出 `table` / `formula` block。
 - `extract-images`：从原 PDF 提取可用图片资产，并把 `image.asset_path` 写回增强版 `LayoutConfig`。
+- `translate-layout`：读取 `LayoutConfig`，只翻译可翻译文本块，默认输出中文译文到 `translated_text`。
 - `render-layout`：用 `LayoutConfig` 重建 PDF；图片块有有效 `asset_path` 时会回填真实图片，否则保留占位框；表格和公式当前以可调试占位框渲染。
 - 默认不处理扫描版 PDF，也不会开启 OCR。
 - 目前不会输出译文，也不会处理图片内容编辑。
@@ -179,11 +180,49 @@ uv run pdftranslate extract-images assets/1603.08767v1.pdf \
 
 如果某个图片块没有匹配到可提取图片，会保留原有 `ref`、尺寸和 `mime_type`，后续渲染时仍显示占位框。
 
-### 4. 用 LayoutConfig 重建 PDF
+### 4. 翻译 LayoutConfig 文本块
+
+没有真实模型 key 时，可以先用 mock provider 跑通链路：
 
 ```bash
-uv run pdftranslate render-layout output/layout/1603.08767v1.with-images.layout.json \
-  --output output/pdf/1603.08767v1.with-images.rebuilt.pdf \
+uv run pdftranslate translate-layout output/layout/1603.08767v1.with-images.layout.json \
+  --output output/layout/1603.08767v1.translated.layout.json \
+  --provider mock
+```
+
+mock provider 会生成确定性的中文样例译文，便于验证 `translated_text`、重建和 debug PDF 流程。
+
+真实翻译默认使用 `--provider openai`。这里的 openai provider 指 OpenAI-compatible 接口，只在翻译命令中读取项目根目录 `.env` 或环境变量：
+
+```dotenv
+BASE_URL=https://your-openai-compatible-endpoint/v1
+KEY=your-api-key
+MODEL=your-model-name
+```
+
+也兼容标准变量：
+
+```bash
+export OPENAI_BASE_URL="https://api.openai.com/v1"
+export OPENAI_API_KEY="your-api-key"
+export OPENAI_MODEL="gpt-4o-mini"
+```
+
+`.env` 中的 `BASE_URL`、`KEY`、`MODEL` 只用于 `translate-layout`。`parse-layout`、`extract-images` 和 `render-layout` 不读取这些翻译配置。当前也不会复用 Codex Desktop 或 ChatGPT 登录态；如果没有 `KEY` 或 `OPENAI_API_KEY`，请使用 `--provider mock` 或先配置 key。
+
+运行真实 provider：
+
+```bash
+uv run pdftranslate translate-layout output/layout/1603.08767v1.with-images.layout.json \
+  --output output/layout/1603.08767v1.translated.layout.json \
+  --provider openai
+```
+
+### 5. 用 LayoutConfig 重建 PDF
+
+```bash
+uv run pdftranslate render-layout output/layout/1603.08767v1.translated.layout.json \
+  --output output/pdf/1603.08767v1.translated.rebuilt.pdf \
   --debug-boxes
 ```
 
@@ -217,7 +256,8 @@ uv run pdftranslate render-layout output/layout/1603.08767v1.with-images.layout.
 - style 目前只保留字段占位，无法可靠取得的值为 `null`。
 - 图片资产提取只覆盖 PDF 中可直接提取的 raster image；矢量图仍可能显示为占位或普通文本块。
 - 表格和公式依赖 Docling 的识别结果；当前会进入 `LayoutConfig`，但重建 PDF 时仍以占位框表示，还不会恢复表格边框、公式字体或数学排版细节。
-- 还没有接入 AI 翻译；当前 PDF 重建仍是验证性输出，不保证像素级一致。
+- 已有 provider-based 文本翻译入口，但当前不翻译图片、公式和表格。
+- 当前 PDF 重建仍是验证性输出，不保证像素级一致。
 
 ## 测试
 

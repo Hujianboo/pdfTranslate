@@ -66,6 +66,32 @@ def test_text_block_serializes_translation_ready_fields():
     }
 
 
+def test_text_block_serializes_translated_text_when_present():
+    block = TextBlock(
+        id="p1_b1",
+        page_number=1,
+        text="Original text",
+        translated_text="译文",
+        bbox=BBox(x0=72.0, y0=100.0, x1=200.0, y1=124.0),
+    )
+
+    data = block.to_dict()
+
+    assert data["text"] == "Original text"
+    assert data["translated_text"] == "译文"
+
+
+def test_source_only_text_block_omits_translated_text():
+    block = TextBlock(
+        id="p1_b1",
+        page_number=1,
+        text="Original text",
+        bbox=BBox(x0=72.0, y0=100.0, x1=200.0, y1=124.0),
+    )
+
+    assert "translated_text" not in block.to_dict()
+
+
 def test_image_block_serializes_rebuild_reference_fields():
     block = ImageBlock(
         id="p1_i1",
