@@ -263,6 +263,107 @@ def test_render_layout_command_creates_non_empty_pdf(tmp_path):
     assert output_path.stat().st_size > 0
 
 
+def test_render_layout_command_creates_pdf_from_translated_layout(tmp_path):
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["translated_text"] = "译文"
+    input_path = tmp_path / "sample.translated.layout.json"
+    output_path = tmp_path / "translated.pdf"
+    input_path.write_text(
+        layout_config_from_dict(data).to_json(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "render-layout",
+            str(input_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert output_path.stat().st_size > 0
+
+
+def test_render_layout_require_translations_succeeds_when_complete(tmp_path):
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["translated_text"] = "译文"
+    input_path = tmp_path / "complete.translated.layout.json"
+    output_path = tmp_path / "complete.pdf"
+    input_path.write_text(
+        layout_config_from_dict(data).to_json(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "render-layout",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--require-translations",
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.exists()
+
+
+def test_render_layout_require_translations_fails_with_missing_block_id(
+    tmp_path,
+    capsys,
+):
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["id"] = "p1_b2"
+    input_path = tmp_path / "incomplete.layout.json"
+    output_path = tmp_path / "incomplete.pdf"
+    input_path.write_text(
+        layout_config_from_dict(data).to_json(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "render-layout",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--require-translations",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code != 0
+    assert "p1_b2" in captured.err
+    assert not output_path.exists()
+
+
+def test_render_layout_default_mode_allows_partially_translated_layout(tmp_path):
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["id"] = "p1_b2"
+    input_path = tmp_path / "partial.layout.json"
+    output_path = tmp_path / "partial.pdf"
+    input_path.write_text(
+        layout_config_from_dict(data).to_json(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "render-layout",
+            str(input_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert output_path.stat().st_size > 0
+
+
 def test_render_layout_command_passes_sample_text_and_debug_options(
     tmp_path,
     monkeypatch,

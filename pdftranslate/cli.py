@@ -29,6 +29,7 @@ def build_parser() -> ArgumentParser:
     render_layout_parser.add_argument("--output", required=True)
     render_layout_parser.add_argument("--sample-text", choices=["zh"])
     render_layout_parser.add_argument("--debug-boxes", action="store_true")
+    render_layout_parser.add_argument("--require-translations", action="store_true")
 
     translate_layout_parser = subparsers.add_parser("translate-layout")
     translate_layout_parser.add_argument("input_layout_json")
@@ -89,9 +90,22 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         from pdftranslate.layout_io import load_layout_config
-        from pdftranslate.pdf_renderer import RenderOptions, render_layout_pdf
+        from pdftranslate.pdf_renderer import (
+            RenderOptions,
+            missing_translations_for_layout,
+            render_layout_pdf,
+        )
 
         config = load_layout_config(input_path)
+        if args.require_translations:
+            missing = missing_translations_for_layout(config)
+            if missing:
+                print(
+                    "missing translated_text for translatable text blocks: "
+                    + ", ".join(missing),
+                    file=sys.stderr,
+                )
+                return 1
         render_layout_pdf(
             config,
             Path(args.output),

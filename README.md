@@ -8,9 +8,9 @@
 - `parse-layout`：用 Docling 解析 PDF 版面，并输出 JSON 格式的 `LayoutConfig`；当 Docling 检出表格或公式时，会输出 `table` / `formula` block。
 - `extract-images`：从原 PDF 提取可用图片资产，并把 `image.asset_path` 写回增强版 `LayoutConfig`。
 - `translate-layout`：读取 `LayoutConfig`，只翻译可翻译文本块，默认输出中文译文到 `translated_text`。
-- `render-layout`：用 `LayoutConfig` 重建 PDF；图片块有有效 `asset_path` 时会回填真实图片，否则保留占位框；表格和公式当前以可调试占位框渲染。
+- `render-layout`：用 `LayoutConfig` 重建 PDF；文本块有 `translated_text` 时会优先绘制译文，并进行 bbox 内换行、字号收缩和 overflow 标记；图片块有有效 `asset_path` 时会回填真实图片，否则保留占位框；表格和公式当前以可调试占位框渲染。
 - 默认不处理扫描版 PDF，也不会开启 OCR。
-- 目前不会输出译文，也不会处理图片内容编辑。
+- 目前不会翻译图片内容，也不会编辑图片本身。
 
 ## 安装依赖
 
@@ -223,8 +223,13 @@ uv run pdftranslate translate-layout output/layout/1603.08767v1.with-images.layo
 ```bash
 uv run pdftranslate render-layout output/layout/1603.08767v1.translated.layout.json \
   --output output/pdf/1603.08767v1.translated.rebuilt.pdf \
+  --require-translations \
   --debug-boxes
 ```
+
+最终导出翻译版 PDF 时建议加 `--require-translations`。该选项会检查所有 `translatable=true` 的文本块都包含非空 `translated_text`；如果缺失译文，命令会在生成 PDF 前失败，并在 stderr 中列出缺失的 block id。调试半成品 layout 时可以不加这个选项，渲染器会继续使用原文或样本文本回退规则。
+
+当文本块包含 `translated_text` 时，渲染器会优先使用译文，并尝试在原 bbox 内做中文友好的换行。如果默认字号放不下，会逐步缩小字号；仍然放不下时会标记 overflow。开启 `--debug-boxes` 后，overflow 文本块会显示额外的红色 `overflow` 标记，方便定位仍需人工或后续重排处理的区域。
 
 调试中文样本文本可以加：
 
@@ -235,7 +240,7 @@ uv run pdftranslate render-layout output/layout/1603.08767v1.with-images.layout.
   --debug-boxes
 ```
 
-当前重建目标是验证页面尺寸、坐标方向、文本块位置、图片大体位置，以及表格/公式占位框是否覆盖正确区域。表格边框、公式排版、矢量图形和复杂排版还没有进入稳定重建阶段。
+当前重建目标是验证页面尺寸、坐标方向、文本块位置、译文在 bbox 内的基本可读性、图片大体位置，以及表格/公式占位框是否覆盖正确区域。表格边框、公式排版、矢量图形、跨 block 段落合并和 BabelDOC 级别的复杂重排还没有进入稳定重建阶段。
 
 ## 当前设计为什么代码不多
 
@@ -257,7 +262,7 @@ uv run pdftranslate render-layout output/layout/1603.08767v1.with-images.layout.
 - 图片资产提取只覆盖 PDF 中可直接提取的 raster image；矢量图仍可能显示为占位或普通文本块。
 - 表格和公式依赖 Docling 的识别结果；当前会进入 `LayoutConfig`，但重建 PDF 时仍以占位框表示，还不会恢复表格边框、公式字体或数学排版细节。
 - 已有 provider-based 文本翻译入口，但当前不翻译图片、公式和表格。
-- 当前 PDF 重建仍是验证性输出，不保证像素级一致。
+- 当前 PDF 重建仍是验证性输出，不保证像素级一致；译文会做 block 内换行和缩字号，但不会做段落级合并、跨页续排或全局碰撞检测。
 
 ## 测试
 

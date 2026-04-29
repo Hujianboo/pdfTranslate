@@ -1,7 +1,16 @@
 import base64
 
 from pdftranslate.layout_io import layout_config_from_dict
-from pdftranslate.pdf_renderer import RenderOptions, build_render_plan, render_layout_pdf
+from pdftranslate.pdf_renderer import (
+    DEFAULT_TEXT_FONT_SIZE,
+    DrawCommand,
+    MIN_TEXT_FONT_SIZE,
+    RenderOptions,
+    build_render_plan,
+    render_layout_pdf,
+    missing_translations_for_layout,
+    _draw_text_in_box,
+)
 from tests.fixtures import layout_dict_with_all_block_kinds, minimal_layout_dict
 
 
@@ -9,6 +18,26 @@ _ONE_PIXEL_PNG = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8"
     "/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
+
+
+class _FakePdf:
+    def __init__(self):
+        self.drawn_strings = []
+
+    def drawString(self, x, y, text):
+        self.drawn_strings.append((x, y, text))
+
+
+def _only_text_command(config, options=None):
+    plan = build_render_plan(config, options)
+    text_commands = [
+        command
+        for page in plan.pages
+        for command in page.commands
+        if command.kind == "text"
+    ]
+    assert len(text_commands) == 1
+    return text_commands[0]
 
 
 def test_text_block_bbox_maps_to_text_draw_command():
@@ -32,6 +61,22 @@ def test_text_block_bbox_maps_to_text_draw_command():
     assert command.text == "Original text"
 
 
+def test_translated_text_is_wrapped_into_fit_lines_within_bbox_width():
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["bbox"]["x1"] = 112.0
+    data["pages"][0]["blocks"][0]["bbox"]["y1"] = 220.0
+    data["pages"][0]["blocks"][0]["translated_text"] = "这是第一句。这是第二句。"
+    config = layout_config_from_dict(data)
+
+    command = _only_text_command(config)
+
+    assert len(command.lines) > 1
+    assert all(
+        command.estimate_text_width(line) <= command.width
+        for line in command.lines
+    )
+
+
 def test_translated_text_takes_priority_over_original_text():
     data = minimal_layout_dict()
     data["pages"][0]["blocks"][0]["translated_text"] = "译文"
@@ -46,6 +91,194 @@ def test_translated_text_takes_priority_over_original_text():
         if command.kind == "text"
     ]
     assert text_commands[0].text == "译文"
+
+
+def test_translated_text_reduces_font_size_when_bbox_height_is_short():
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["bbox"] = {
+        "x0": 72.0,
+        "y0": 120.0,
+        "x1": 132.0,
+        "y1": 138.0,
+    }
+    data["pages"][0]["blocks"][0]["translated_text"] = "中文内容中文内容中文内容"
+    config = layout_config_from_dict(data)
+
+    command = _only_text_command(config)
+
+    assert command.font_size < DEFAULT_TEXT_FONT_SIZE
+
+
+def test_fitting_translated_text_keeps_default_font_size_without_overflow():
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["bbox"]["x1"] = 260.0
+    data["pages"][0]["blocks"][0]["bbox"]["y1"] = 180.0
+    data["pages"][0]["blocks"][0]["translated_text"] = "可读译文"
+    config = layout_config_from_dict(data)
+
+    command = _only_text_command(config)
+
+    assert command.font_size == DEFAULT_TEXT_FONT_SIZE
+    assert command.overflow is False
+
+
+def test_tiny_bbox_never_uses_font_size_below_minimum():
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["bbox"] = {
+        "x0": 72.0,
+        "y0": 120.0,
+        "x1": 73.0,
+        "y1": 121.0,
+    }
+    data["pages"][0]["blocks"][0]["translated_text"] = "非常小的文本框"
+    config = layout_config_from_dict(data)
+
+    command = _only_text_command(config)
+
+    assert command.font_size >= MIN_TEXT_FONT_SIZE
+    assert command.font_size > 0
+
+
+def test_unfit_translated_text_marks_overflow_and_keeps_block_id():
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["bbox"] = {
+        "x0": 72.0,
+        "y0": 120.0,
+        "x1": 112.0,
+        "y1": 130.0,
+    }
+    data["pages"][0]["blocks"][0]["translated_text"] = (
+        "这是一段非常长的中文译文，需要很多很多行才能放进文本框。"
+    )
+    config = layout_config_from_dict(data)
+
+    command = _only_text_command(config)
+
+    assert command.block_id == "p1_b1"
+    assert command.overflow is True
+
+
+def test_narrow_text_block_does_not_use_full_chinese_translation():
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["text"] = "arXiv:1706.03762v7"
+    data["pages"][0]["blocks"][0]["bbox"] = {
+        "x0": 17.0,
+        "y0": 236.0,
+        "x1": 35.0,
+        "y1": 627.0,
+    }
+    data["pages"][0]["blocks"][0]["translated_text"] = "这是会被挤成竖排的中文译文"
+    config = layout_config_from_dict(data)
+
+    command = _only_text_command(config)
+
+    assert command.text != "这是会被挤成竖排的中文译文"
+    assert command.text.startswith("arXiv")
+
+
+def test_narrow_text_block_records_fit_reason():
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["bbox"]["x1"] = 90.0
+    data["pages"][0]["blocks"][0]["translated_text"] = "窄块中文译文"
+    config = layout_config_from_dict(data)
+
+    command = _only_text_command(config)
+
+    assert command.fit_reason == "narrow-block-source-text"
+
+
+def test_draw_text_in_box_uses_precomputed_fit_lines():
+    pdf = _FakePdf()
+    command = DrawCommand(
+        kind="text",
+        block_id="p1_b1",
+        x=10.0,
+        y=20.0,
+        width=12.0,
+        height=100.0,
+        text="this text would be rewrapped without precomputed lines",
+        lines=("预计算第一行", "预计算第二行"),
+        font_size=10.0,
+        line_height=12.0,
+    )
+
+    _draw_text_in_box(pdf, command)
+
+    assert [drawn[2] for drawn in pdf.drawn_strings] == [
+        "预计算第一行",
+        "预计算第二行",
+    ]
+
+
+def test_missing_translations_for_layout_returns_translatable_text_block_ids():
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"].append(
+        {
+            "id": "p1_b2",
+            "kind": "text",
+            "page_number": 1,
+            "text": "Needs translation",
+            "bbox": {
+                "x0": 72.0,
+                "y0": 160.0,
+                "x1": 180.0,
+                "y1": 184.0,
+            },
+            "style": {
+                "font_name": None,
+                "font_size": None,
+                "color": None,
+                "rotation": 0,
+            },
+            "translatable": True,
+        }
+    )
+    data["pages"][0]["blocks"].append(
+        {
+            "id": "p1_b3",
+            "kind": "text",
+            "page_number": 1,
+            "text": "Already translated",
+            "bbox": {
+                "x0": 72.0,
+                "y0": 200.0,
+                "x1": 180.0,
+                "y1": 224.0,
+            },
+            "style": {
+                "font_name": None,
+                "font_size": None,
+                "color": None,
+                "rotation": 0,
+            },
+            "translatable": True,
+            "translated_text": "已有译文",
+        }
+    )
+    data["pages"][0]["blocks"].append(
+        {
+            "id": "p1_b4",
+            "kind": "text",
+            "page_number": 1,
+            "text": "Do not translate",
+            "bbox": {
+                "x0": 72.0,
+                "y0": 240.0,
+                "x1": 180.0,
+                "y1": 264.0,
+            },
+            "style": {
+                "font_name": None,
+                "font_size": None,
+                "color": None,
+                "rotation": 0,
+            },
+            "translatable": False,
+        }
+    )
+    config = layout_config_from_dict(data)
+
+    assert missing_translations_for_layout(config) == ["p1_b1", "p1_b2"]
 
 
 def test_image_block_bbox_maps_to_placeholder_draw_command():
