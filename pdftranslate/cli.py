@@ -18,6 +18,18 @@ def build_parser() -> ArgumentParser:
     parse_layout_parser.add_argument("input_pdf")
     parse_layout_parser.add_argument("--output", required=True)
 
+    extract_images_parser = subparsers.add_parser("extract-images")
+    extract_images_parser.add_argument("input_pdf")
+    extract_images_parser.add_argument("--layout", required=True)
+    extract_images_parser.add_argument("--output-layout", required=True)
+    extract_images_parser.add_argument("--assets-dir", required=True)
+
+    render_layout_parser = subparsers.add_parser("render-layout")
+    render_layout_parser.add_argument("input_layout_json")
+    render_layout_parser.add_argument("--output", required=True)
+    render_layout_parser.add_argument("--sample-text", choices=["zh"])
+    render_layout_parser.add_argument("--debug-boxes", action="store_true")
+
     return parser
 
 
@@ -45,13 +57,49 @@ def main(argv: list[str] | None = None) -> int:
         _write_text_output(args.output, config.to_json())
         return 0
 
+    if args.command == "extract-images":
+        input_path = _existing_input_path(args.input_pdf)
+        if input_path is None:
+            return 1
+        layout_path = _existing_input_path(args.layout, label="layout file")
+        if layout_path is None:
+            return 1
+
+        from pdftranslate.image_assets import extract_pdf_image_assets
+        from pdftranslate.layout_io import load_layout_config
+
+        config = load_layout_config(layout_path)
+        updated = extract_pdf_image_assets(
+            input_path,
+            assets_dir=Path(args.assets_dir),
+            layout_config=config,
+        )
+        _write_text_output(args.output_layout, updated.to_json())
+        return 0
+
+    if args.command == "render-layout":
+        input_path = _existing_input_path(args.input_layout_json)
+        if input_path is None:
+            return 1
+
+        from pdftranslate.layout_io import load_layout_config
+        from pdftranslate.pdf_renderer import RenderOptions, render_layout_pdf
+
+        config = load_layout_config(input_path)
+        render_layout_pdf(
+            config,
+            Path(args.output),
+            RenderOptions(sample_text=args.sample_text, debug_boxes=args.debug_boxes),
+        )
+        return 0
+
     parser.error(f"unknown command: {args.command}")
 
 
-def _existing_input_path(input_pdf: str) -> Path | None:
+def _existing_input_path(input_pdf: str, label: str = "input file") -> Path | None:
     input_path = Path(input_pdf)
     if not input_path.is_file():
-        print(f"input file not found: {input_path}", file=sys.stderr)
+        print(f"{label} not found: {input_path}", file=sys.stderr)
         return None
     return input_path
 

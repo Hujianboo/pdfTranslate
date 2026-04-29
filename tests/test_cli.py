@@ -1,7 +1,9 @@
+import base64
 import json
 from pathlib import Path
 
 from pdftranslate.cli import main
+from pdftranslate.layout_io import layout_config_from_dict
 from pdftranslate.layout import (
     BBox,
     ImageBlock,
@@ -9,6 +11,13 @@ from pdftranslate.layout import (
     LayoutConfig,
     PageLayout,
     TextBlock,
+)
+from tests.fixtures import minimal_layout_dict
+
+
+_ONE_PIXEL_PNG = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8"
+    "/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
 
 
@@ -70,6 +79,16 @@ def write_text_pdf(path: Path, page_texts: list[str]) -> None:
     path.write_bytes("".join(chunks).encode("latin-1"))
 
 
+def write_pdf_with_png(path: Path) -> None:
+    from reportlab.pdfgen import canvas
+
+    image_path = path.with_suffix(".png")
+    image_path.write_bytes(base64.b64decode(_ONE_PIXEL_PNG))
+    pdf = canvas.Canvas(str(path), pagesize=(612.0, 792.0))
+    pdf.drawImage(str(image_path), 200.0, 240.0, width=100.0, height=100.0)
+    pdf.save()
+
+
 def test_extract_command_creates_non_empty_markdown(tmp_path):
     output_path = tmp_path / "sample.md"
 
@@ -105,10 +124,14 @@ def test_extract_command_rejects_missing_input(tmp_path, capsys):
     assert not output_path.exists()
 
 
-def test_parse_layout_command_creates_json_file(tmp_path):
+def test_parse_layout_command_creates_json_file(tmp_path, monkeypatch):
     input_path = tmp_path / "sample.pdf"
     output_path = tmp_path / "layout.json"
-    write_text_pdf(input_path, ["CLI layout text"])
+    input_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    monkeypatch.setattr(
+        "pdftranslate.docling_adapter.parse_pdf_layout",
+        lambda path: layout_config_from_dict(minimal_layout_dict()),
+    )
 
     exit_code = main(
         [
@@ -188,3 +211,125 @@ def test_parse_layout_command_outputs_layout_schema_contract(tmp_path, monkeypat
     image_block = data["pages"][0]["blocks"][1]
     assert {"text", "style", "translatable"}.issubset(text_block)
     assert {"ref", "width", "height", "mime_type"} == set(image_block["image"])
+
+
+def test_render_layout_command_creates_non_empty_pdf(tmp_path):
+    input_path = tmp_path / "sample.layout.json"
+    output_path = tmp_path / "rebuilt.pdf"
+    input_path.write_text(
+        layout_config_from_dict(minimal_layout_dict()).to_json(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "render-layout",
+            str(input_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert output_path.stat().st_size > 0
+
+
+def test_render_layout_command_passes_sample_text_and_debug_options(
+    tmp_path,
+    monkeypatch,
+):
+    input_path = tmp_path / "sample.layout.json"
+    output_path = tmp_path / "rebuilt.pdf"
+    input_path.write_text(
+        layout_config_from_dict(minimal_layout_dict()).to_json(),
+        encoding="utf-8",
+    )
+    captured = {}
+
+    def fake_render_layout_pdf(config, output, options=None):
+        captured["source_file"] = config.source_file
+        captured["output"] = output
+        captured["sample_text"] = options.sample_text
+        captured["debug_boxes"] = options.debug_boxes
+        Path(output).write_bytes(b"%PDF-1.4\n%%EOF\n")
+
+    monkeypatch.setattr(
+        "pdftranslate.pdf_renderer.render_layout_pdf",
+        fake_render_layout_pdf,
+    )
+
+    exit_code = main(
+        [
+            "render-layout",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--sample-text",
+            "zh",
+            "--debug-boxes",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured == {
+        "source_file": "sample.pdf",
+        "output": output_path,
+        "sample_text": "zh",
+        "debug_boxes": True,
+    }
+
+
+def test_extract_images_command_creates_enhanced_layout_and_assets(tmp_path):
+    input_path = tmp_path / "with-image.pdf"
+    layout_path = tmp_path / "sample.layout.json"
+    output_layout = tmp_path / "sample.with-images.layout.json"
+    assets_dir = tmp_path / "images"
+    write_pdf_with_png(input_path)
+    layout_path.write_text(
+        layout_config_from_dict(minimal_layout_dict()).to_json(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "extract-images",
+            str(input_path),
+            "--layout",
+            str(layout_path),
+            "--output-layout",
+            str(output_layout),
+            "--assets-dir",
+            str(assets_dir),
+        ]
+    )
+
+    data = json.loads(output_layout.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output_layout.exists()
+    assert assets_dir.is_dir()
+    assert data["pages"][0]["blocks"][1]["image"]["asset_path"]
+
+
+def test_extract_images_command_rejects_missing_layout_json(tmp_path, capsys):
+    input_path = tmp_path / "with-image.pdf"
+    output_layout = tmp_path / "sample.with-images.layout.json"
+    write_pdf_with_png(input_path)
+
+    exit_code = main(
+        [
+            "extract-images",
+            str(input_path),
+            "--layout",
+            str(tmp_path / "missing.layout.json"),
+            "--output-layout",
+            str(output_layout),
+            "--assets-dir",
+            str(tmp_path / "images"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code != 0
+    assert "layout file not found" in captured.err
+    assert not output_layout.exists()

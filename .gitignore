@@ -27,6 +27,8 @@ dist/
 # Generated CLI outputs
 assets/*.layout.json
 assets/*.md
+output/
+tmp/
 layout.json
 *.layout.json
 

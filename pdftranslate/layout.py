@@ -69,14 +69,18 @@ class ImageInfo:
     width: float
     height: float
     mime_type: str | None = None
+    asset_path: str | None = None
 
     def to_dict(self) -> dict[str, str | float | None]:
-        return {
+        data: dict[str, str | float | None] = {
             "ref": self.ref,
             "width": self.width,
             "height": self.height,
             "mime_type": self.mime_type,
         }
+        if self.asset_path is not None:
+            data["asset_path"] = self.asset_path
+        return data
 
 
 @dataclass(frozen=True)

@@ -83,6 +83,26 @@ def test_image_block_serializes_rebuild_reference_fields():
     }
 
 
+def test_image_info_serializes_asset_path_when_present():
+    block = ImageBlock(
+        id="p2_i1",
+        page_number=2,
+        bbox=BBox(x0=72.0, y0=220.0, x1=240.0, y1=340.0),
+        image=ImageInfo(
+            ref="p2_i1",
+            width=168.0,
+            height=120.0,
+            mime_type="image/png",
+            asset_path="output/assets/sample/images/p2_i1.png",
+        ),
+    )
+
+    data = block.to_dict()
+
+    assert data["image"]["asset_path"] == "output/assets/sample/images/p2_i1.png"
+    assert data["image"]["mime_type"] == "image/png"
+
+
 def test_layout_config_json_excludes_translation_rebuild_and_ocr_fields():
     config = LayoutConfig(
         source_file="sample.pdf",

@@ -1,13 +1,15 @@
 # pdfTranslate
 
-一个实验中的 PDF 翻译工具。当前阶段先不做翻译和 PDF 回填，而是把普通文本型 PDF 解析成稳定的中间结构 `LayoutConfig`，为后续接入 AI 翻译和原样 PDF 重建做准备。
+一个实验中的 PDF 翻译工具。当前阶段先不做 AI 翻译，而是把普通文本型 PDF 解析成稳定的中间结构 `LayoutConfig`，并逐步验证原样 PDF 重建能力，为后续接入 AI 翻译做准备。
 
 ## 当前能力
 
 - `extract`：用 PDFium 提取 PDF 文本并输出 Markdown。
 - `parse-layout`：用 Docling 解析 PDF 版面，并输出 JSON 格式的 `LayoutConfig`。
+- `extract-images`：从原 PDF 提取可用图片资产，并把 `image.asset_path` 写回增强版 `LayoutConfig`。
+- `render-layout`：用 `LayoutConfig` 重建 PDF；图片块有有效 `asset_path` 时会回填真实图片，否则保留占位框。
 - 默认不处理扫描版 PDF，也不会开启 OCR。
-- 目前不会输出译文、重建 PDF 或图片编辑结果。
+- 目前不会输出译文，也不会处理图片内容编辑。
 
 ## 安装依赖
 
@@ -32,7 +34,7 @@ uv run pdftranslate extract assets/1603.08767v1.pdf --output sample.md
 ### 2. 解析 LayoutConfig
 
 ```bash
-uv run pdftranslate parse-layout assets/1603.08767v1.pdf --output layout.json
+uv run pdftranslate parse-layout assets/1603.08767v1.pdf --output assets/1603.08767v1.layout.json
 ```
 
 输出文件是 JSON，里面包含页面尺寸、文本块、图片块、坐标和基础样式占位信息。后续 AI 翻译阶段会优先消费这个结构，而不是直接消费 Docling 的内部对象。
@@ -87,7 +89,8 @@ uv run pdftranslate parse-layout assets/1603.08767v1.pdf --output layout.json
             "ref": "p1_i1",
             "width": 168.0,
             "height": 120.0,
-            "mime_type": null
+            "mime_type": null,
+            "asset_path": "output/assets/1603.08767v1/images/p1_i1.png"
           }
         }
       ],
@@ -102,6 +105,45 @@ uv run pdftranslate parse-layout assets/1603.08767v1.pdf --output layout.json
 ```text
 openspec/changes/parse-pdf-to-layout-config/layout-config-schema.md
 ```
+
+### 3. 提取图片资产并写回 LayoutConfig
+
+`parse-layout` 只负责发现图片块的位置。要让重建 PDF 回填真实图片，需要再运行图片资产提取：
+
+```bash
+uv run pdftranslate extract-images assets/1603.08767v1.pdf \
+  --layout assets/1603.08767v1.layout.json \
+  --output-layout output/layout/1603.08767v1.with-images.layout.json \
+  --assets-dir output/assets/1603.08767v1/images
+```
+
+这个命令会：
+
+- 从原 PDF 中提取可用的嵌入图片。
+- 保存到 `--assets-dir` 指定的目录。
+- 尽量按页面和 bbox 与现有 image block 匹配。
+- 在增强版 layout JSON 中写入相对路径 `image.asset_path`。
+
+如果某个图片块没有匹配到可提取图片，会保留原有 `ref`、尺寸和 `mime_type`，后续渲染时仍显示占位框。
+
+### 4. 用 LayoutConfig 重建 PDF
+
+```bash
+uv run pdftranslate render-layout output/layout/1603.08767v1.with-images.layout.json \
+  --output output/pdf/1603.08767v1.with-images.rebuilt.pdf \
+  --debug-boxes
+```
+
+调试中文样本文本可以加：
+
+```bash
+uv run pdftranslate render-layout output/layout/1603.08767v1.with-images.layout.json \
+  --output output/pdf/1603.08767v1.with-images.rebuilt.zh.pdf \
+  --sample-text zh \
+  --debug-boxes
+```
+
+当前重建目标是验证页面尺寸、坐标方向、文本块位置和图片大体位置。表格、公式、矢量图形和复杂排版还没有进入稳定重建阶段。
 
 ## 当前设计为什么代码不多
 
@@ -120,8 +162,8 @@ openspec/changes/parse-pdf-to-layout-config/layout-config-schema.md
 - 只面向普通文本型 PDF。
 - 扫描版 PDF/OCR 暂不支持。
 - style 目前只保留字段占位，无法可靠取得的值为 `null`。
-- 图片目前记录位置、尺寸和稳定引用，不导出图片二进制。
-- 还没有接入 AI 翻译，也没有 PDF 重建输出。
+- 图片资产提取只覆盖 PDF 中可直接提取的 raster image；矢量图、公式和表格可能仍显示为占位或普通文本块。
+- 还没有接入 AI 翻译；当前 PDF 重建仍是验证性输出，不保证像素级一致。
 
 ## 测试
 

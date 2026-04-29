@@ -2,7 +2,6 @@
 
 ## Purpose
 定义 PDF 结构化 layout/config 解析能力：将带文本层 PDF 解析为确定性的 JSON 配置文档，保留后续 AI 翻译和 PDF 回填需要的页面、文本块、图片块、坐标和基础样式线索。
-
 ## Requirements
 ### Requirement: 输出结构化 PDF layout 配置
 系统 SHALL 提供一个结构化 layout/config 解析能力，将带文本层 PDF 输出为确定性的 JSON 配置文档。
@@ -54,7 +53,7 @@
 - **THEN** 该文本块的 `bbox` 包含数值型 `x0`、`y0`、`x1`、`y1` 字段，且 `x1` 大于或等于 `x0`，`y1` 大于或等于 `y0`
 
 ### Requirement: 配置保留图片块定位信息
-系统 SHALL 将 PDF 页面中的图片对象记录为图片块，并为每个图片块输出稳定 ID、bbox 坐标、页面编号、图片尺寸和可追踪引用。
+系统 SHALL 将 PDF 页面中的图片对象记录为图片块，并为每个图片块输出稳定 ID、bbox 坐标、页面编号、图片尺寸、可追踪引用，以及在资源已提取时可用于重建渲染的图片资产路径。
 
 #### Scenario: 图片块包含后续重建所需字段
 - **GIVEN** 一个 PDF 页面包含图片对象
@@ -71,6 +70,16 @@
 - **WHEN** 系统将其解析为 layout/config
 - **THEN** 该图片块的 `image` 对象包含数值型 `width`、`height` 和字符串型 `ref` 字段，且 `width` 和 `height` 均大于 `0`
 
+#### Scenario: 图片块记录已提取资产路径
+- **GIVEN** 一个图片块已成功关联到导出的图片资产
+- **WHEN** 系统输出增强版 layout/config
+- **THEN** 该图片块的 `image` 对象包含字符串型 `asset_path` 字段，且该路径指向存在的本地图片文件
+
+#### Scenario: 图片资产路径是可选字段
+- **GIVEN** 一个图片块尚未关联到导出的图片资产
+- **WHEN** 系统输出 layout/config
+- **THEN** 该图片块的 `image` 对象可以不包含 `asset_path` 字段，并且仍然符合 LayoutConfig schema
+
 ### Requirement: 配置范围保持在解析阶段
 系统 SHALL 将本次能力限制在 PDF 结构化解析和 JSON 序列化范围内，不执行 AI 翻译、译文排版回填、图片内容编辑、PDF 重建、扫描版 PDF 或 OCR。
 
@@ -83,3 +92,4 @@
 - **GIVEN** 一个 PDF 输入文件
 - **WHEN** 系统将其解析为 layout/config
 - **THEN** JSON 不包含 `translated_text`、`target_text`、`rebuilt_pdf`、`edited_image` 或 OCR 结果字段
+
