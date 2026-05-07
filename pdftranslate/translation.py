@@ -77,6 +77,7 @@ class MockTranslationProvider:
         ]
 
 
+CodexCompletion = Callable[[str], str]
 PostJson = Callable[[str, dict[str, str], dict[str, Any]], dict[str, Any]]
 TranslationProgress = Callable[[int, int, int], None]
 TranslationRetryProgress = Callable[[int, int, int, Exception, float], None]
@@ -117,15 +118,37 @@ class OpenAICompatibleTranslationProvider:
         return _parse_translation_content(str(content))
 
 
+class CodexTranslationProvider:
+    name = "codex"
+
+    def __init__(self, complete: CodexCompletion) -> None:
+        self._complete = complete
+
+    def translate(self, request: TranslationRequest) -> list[TranslationResult]:
+        if not request.items:
+            return []
+
+        content = self._complete(_codex_translation_prompt(request))
+        return _parse_translation_content(content)
+
+
 def create_translation_provider(
     name: str | None = None,
     *,
     env: Mapping[str, str] | None = None,
     env_path: str | Path | None = Path(".env"),
+    codex_complete: CodexCompletion | None = None,
 ) -> TranslationProvider:
     provider_name = (name or "openai").lower()
     if provider_name == "mock":
         return MockTranslationProvider()
+    if provider_name == "codex":
+        if codex_complete is None:
+            raise MissingProviderCredentials(
+                "codex translation provider requires a Codex plugin adapter: "
+                "pass codex_complete=callable when creating the provider"
+            )
+        return CodexTranslationProvider(codex_complete)
     if provider_name == "openai":
         config = _openai_config_from_env(env=env, env_path=env_path)
         return OpenAICompatibleTranslationProvider(
@@ -368,6 +391,29 @@ def _openai_payload(model: str, translation_request: TranslationRequest) -> dict
             },
         ],
     }
+
+
+def _codex_translation_prompt(translation_request: TranslationRequest) -> str:
+    return (
+        "Translate the following PDF text blocks to the requested target language.\n"
+        "Return JSON only in this exact shape: "
+        '{"translations":[{"id":"...","text":"..."}]}.\n'
+        "Preserve every id exactly. Do not add explanations or Markdown fences.\n"
+        "Do not translate formulas, table structure, or image content.\n\n"
+        + json.dumps(
+            {
+                "target_language": translation_request.target_language,
+                "items": [
+                    {
+                        "id": item.block_id,
+                        "text": item.text,
+                    }
+                    for item in translation_request.items
+                ],
+            },
+            ensure_ascii=False,
+        )
+    )
 
 
 def _parse_translation_content(content: str) -> list[TranslationResult]:

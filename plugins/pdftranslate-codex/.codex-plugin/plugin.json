@@ -1,0 +1,33 @@
+{
+  "name": "pdftranslate-codex",
+  "version": "0.1.0",
+  "description": "Codex workflow for translating pdfTranslate LayoutConfig files without .env model credentials.",
+  "homepage": "https://github.com/hujianbo/pdfTranslate",
+  "repository": "https://github.com/hujianbo/pdfTranslate",
+  "license": "MIT",
+  "keywords": [
+    "pdf",
+    "translation",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "pdfTranslate Codex",
+    "shortDescription": "Translate pdfTranslate layouts through Codex.",
+    "longDescription": "Adds a Codex-native workflow that prepares LayoutConfig translation batches, lets Codex produce JSON responses, and merges those responses back into translated layout files.",
+    "developerName": "pdfTranslate",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Translate this PDF with Codex",
+      "Translate this LayoutConfig to Chinese",
+      "Build a translated PDF from this layout"
+    ],
+    "brandColor": "#2563EB",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/pdftranslate-logo.png"
+  }
+}

@@ -1,5 +1,9 @@
 # pdfTranslate
 
+<p align="center">
+  <img src="plugins/pdftranslate-codex/assets/pdftranslate-logo.png" alt="pdfTranslate logo" width="280">
+</p>
+
 一个实验中的 PDF 翻译工具。当前阶段先不做 AI 翻译，而是把普通文本型 PDF 解析成稳定的中间结构 `LayoutConfig`，并逐步验证原样 PDF 重建能力，为后续接入 AI 翻译做准备。
 
 ## 当前能力
@@ -23,6 +27,74 @@ uv sync
 如果是第一次运行 Docling，它可能会下载模型文件，首轮解析会慢一些。
 
 ## 使用方式
+
+### Codex 插件使用
+
+#### 给自己本地使用
+
+先安装依赖并确认 Codex CLI 已登录：
+
+```bash
+uv sync
+codex login
+```
+
+然后在仓库根目录添加本地 marketplace：
+
+```bash
+codex plugin marketplace add .
+```
+
+重新打开 Codex workspace 后，启用 `pdfTranslate Codex`。之后可以直接对 Codex 说：
+
+```text
+Use pdfTranslate Codex to translate ./assets/1603.08767v1.pdf to Chinese and write the PDF to ./output/pdf.
+```
+
+```text
+用 pdfTranslate Codex 翻译 ./paper.pdf，输出到 ./translated/pdf，翻译完成后删除临时文件。
+```
+
+#### 给别人从 GitHub 安装
+
+发布到 GitHub 后，用户可以把这个仓库添加为 Codex plugin marketplace：
+
+```bash
+codex plugin marketplace add hujianbo/pdfTranslate
+```
+
+也可以用完整 Git URL：
+
+```bash
+codex plugin marketplace add https://github.com/hujianbo/pdfTranslate.git
+```
+
+如果你发布了 tag，建议让用户固定版本：
+
+```bash
+codex plugin marketplace add hujianbo/pdfTranslate --ref v0.1.0
+```
+
+#### 命令行一键翻译
+
+```bash
+uv run python plugins/pdftranslate-codex/scripts/translate_pdf_with_codex.py \
+  assets/1603.08767v1.pdf \
+  --output-dir output/pdf \
+  --target-language zh
+```
+
+常用参数：
+
+- `--output <pdf>`：指定完整输出 PDF 路径。
+- `--output-dir <dir>`：指定输出目录，默认文件名为 `<pdf-name>.zh.pdf`。
+- `--output-layout <json>`：额外保留翻译后的 `LayoutConfig`。
+- `--work-dir <dir>`：指定中间文件目录。
+- `--keep-work-dir`：保留中间文件和日志；默认完成后删除。
+- `--no-images`：跳过图片/表格/公式区域 rasterize。
+- `--debug-boxes`：输出调试框，方便检查排版。
+- `--batch-size` / `--batch-chars`：控制翻译批次大小。
+- `--codex-model <model>`：指定 `codex exec` 使用的模型。
 
 ### 推荐：手动翻译工作流
 
@@ -252,7 +324,7 @@ export OPENAI_API_KEY="your-api-key"
 export OPENAI_MODEL="gpt-4o-mini"
 ```
 
-`.env` 中的 `BASE_URL`、`KEY`、`MODEL` 只用于 `translate-layout`。`parse-layout`、`extract-images` 和 `render-layout` 不读取这些翻译配置。当前也不会复用 Codex Desktop 或 ChatGPT 登录态；如果没有 `KEY` 或 `OPENAI_API_KEY`，请使用 `--provider mock` 或先配置 key。
+`.env` 中的 `BASE_URL`、`KEY`、`MODEL` 只用于 `translate-layout` / `translate-pdf` 的 OpenAI-compatible provider。`parse-layout`、`extract-images` 和 `render-layout` 不读取这些翻译配置。如果没有 `KEY` 或 `OPENAI_API_KEY`，请使用 `--provider mock`、先配置 key，或通过 Codex plugin adapter 接入 `codex` provider。
 
 运行真实 provider：
 
@@ -261,6 +333,8 @@ uv run pdftranslate translate-layout output/layout/1603.08767v1.with-images.layo
   --output output/layout/1603.08767v1.translated.layout.json \
   --provider openai
 ```
+
+如果想用 Codex 自己翻译 PDF，请直接使用上面的“Codex 插件使用”。
 
 ### 5. 用 LayoutConfig 重建 PDF
 

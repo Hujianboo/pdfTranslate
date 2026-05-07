@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from pdftranslate.translation import (
+    CodexTranslationProvider,
     MissingProviderCredentials,
     MockTranslationProvider,
     OpenAICompatibleTranslationProvider,
@@ -79,6 +80,37 @@ def test_provider_factory_creates_mock_provider_with_deterministic_translation()
     assert provider.name == "mock"
     assert results[0].block_id == "p1_b1"
     assert results[0].translated_text == "[zh] Hello"
+
+
+def test_provider_factory_creates_codex_provider_with_adapter_callback():
+    prompts = []
+
+    def fake_complete(prompt: str) -> str:
+        prompts.append(prompt)
+        return '{"translations": [{"id": "p1_b1", "text": "你好"}]}'
+
+    provider = create_translation_provider("codex", codex_complete=fake_complete)
+
+    results = provider.translate(
+        TranslationRequest(
+            target_language="zh",
+            items=[TranslationItem(block_id="p1_b1", text="Hello")],
+        )
+    )
+
+    assert isinstance(provider, CodexTranslationProvider)
+    assert provider.name == "codex"
+    assert results == [TranslationResult(block_id="p1_b1", translated_text="你好")]
+    assert '"target_language": "zh"' in prompts[0]
+    assert '"id": "p1_b1"' in prompts[0]
+    assert '"text": "Hello"' in prompts[0]
+
+
+def test_provider_factory_codex_without_adapter_raises_missing_credentials():
+    with pytest.raises(MissingProviderCredentials) as error:
+        create_translation_provider("codex")
+
+    assert "Codex plugin adapter" in str(error.value)
 
 
 def test_provider_factory_rejects_unknown_provider():

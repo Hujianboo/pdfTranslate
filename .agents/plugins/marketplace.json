@@ -1,0 +1,20 @@
+{
+  "name": "pdftranslate-local",
+  "interface": {
+    "displayName": "pdfTranslate Local"
+  },
+  "plugins": [
+    {
+      "name": "pdftranslate-codex",
+      "source": {
+        "source": "local",
+        "path": "./plugins/pdftranslate-codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
