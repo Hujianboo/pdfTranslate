@@ -1,6 +1,9 @@
+import importlib.util
 import json
+from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 from pdftranslate.layout_io import load_layout_config
 from tests.fixtures import minimal_layout_dict
@@ -8,6 +11,18 @@ from tests.fixtures import minimal_layout_dict
 
 SCRIPT = "plugins/pdftranslate-codex/scripts/codex_layout_translation.py"
 PDF_WORKFLOW_SCRIPT = "plugins/pdftranslate-codex/scripts/translate_pdf_with_codex.py"
+
+
+def _load_pdf_workflow_module():
+    script_path = Path(PDF_WORKFLOW_SCRIPT)
+    spec = importlib.util.spec_from_file_location(
+        "translate_pdf_with_codex_for_test", script_path
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_codex_plugin_script_prepares_and_applies_translation_batches(tmp_path):
@@ -89,3 +104,41 @@ def test_codex_pdf_workflow_script_exposes_customizable_io_options():
     assert "--output-dir" in result.stdout
     assert "--work-dir" in result.stdout
     assert "--keep-work-dir" in result.stdout
+
+
+def test_codex_launcher_uses_direct_codex_when_available(monkeypatch):
+    module = _load_pdf_workflow_module()
+    calls = []
+
+    def fake_run(command, **kwargs):
+        del kwargs
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    assert module._codex_launcher("/usr/local/bin/codex") == ["/usr/local/bin/codex"]
+    assert calls == [["/usr/local/bin/codex", "--version"]]
+
+
+def test_codex_launcher_falls_back_to_arm64_on_apple_silicon(monkeypatch):
+    module = _load_pdf_workflow_module()
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+
+    def fake_run(command, **kwargs):
+        del kwargs
+        if command == ["/usr/local/bin/codex", "--version"]:
+            return SimpleNamespace(returncode=1, stdout="")
+        if command == ["sysctl", "-in", "hw.optional.arm64"]:
+            return SimpleNamespace(returncode=0, stdout="1\n")
+        if command == ["arch", "-arm64", "/usr/local/bin/codex", "--version"]:
+            return SimpleNamespace(returncode=0, stdout="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    assert module._codex_launcher("/usr/local/bin/codex") == [
+        "arch",
+        "-arm64",
+        "/usr/local/bin/codex",
+    ]

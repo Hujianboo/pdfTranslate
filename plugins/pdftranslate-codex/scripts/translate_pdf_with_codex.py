@@ -242,7 +242,7 @@ def _run_codex_translation(
         "finishing, and report omitted ids."
     )
     command = [
-        codex,
+        *_codex_launcher(codex),
         "exec",
         "-C",
         str(REPO_ROOT),
@@ -255,6 +255,51 @@ def _run_codex_translation(
         command.extend(["-m", model])
     command.append(prompt)
     _run(command, log_dir / "codex-exec.log")
+
+
+def _codex_launcher(codex: str) -> list[str]:
+    direct = [codex]
+    if _codex_version_works(direct):
+        return direct
+
+    arm64 = ["arch", "-arm64", codex]
+    if sys.platform == "darwin" and _apple_silicon_host() and _codex_version_works(
+        arm64
+    ):
+        return arm64
+
+    return direct
+
+
+def _codex_version_works(command_prefix: list[str]) -> bool:
+    try:
+        result = subprocess.run(
+            [*command_prefix, "--version"],
+            cwd=REPO_ROOT,
+            check=False,
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def _apple_silicon_host() -> bool:
+    try:
+        result = subprocess.run(
+            ["sysctl", "-in", "hw.optional.arm64"],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.stdout.strip() == "1"
 
 
 def _apply_responses(manifest_path: Path, output_layout: Path, log_dir: Path) -> None:
