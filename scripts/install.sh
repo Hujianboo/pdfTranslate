@@ -3,6 +3,7 @@ set -euo pipefail
 
 REPO_URL="${PDFTRANSLATE_REPO_URL:-https://github.com/Hujianboo/pdfTranslate.git}"
 INSTALL_DIR="${PDFTRANSLATE_INSTALL_DIR:-$HOME/pdfTranslate}"
+MARKETPLACE_NAME="pdftranslate-local"
 
 info() {
   printf '\033[1;34m==>\033[0m %s\n' "$1" >&2
@@ -90,6 +91,15 @@ ensure_codex() {
   warn "Install Codex CLI manually, then run: codex login"
 }
 
+install_or_update_codex_plugin() {
+  local repo_root="$1"
+  local plugin_cache="$HOME/.codex/plugins/cache/$MARKETPLACE_NAME"
+
+  info "Registering or refreshing pdfTranslate marketplace with Codex"
+  rm -rf "$plugin_cache"
+  codex plugin marketplace add "$repo_root" || warn "marketplace add failed; it may already be installed"
+}
+
 main() {
   local repo_root
   repo_root="$(resolve_repo_root)"
@@ -101,8 +111,7 @@ main() {
 
   ensure_codex
   if has_command codex; then
-    info "Adding pdfTranslate marketplace to Codex"
-    codex plugin marketplace add "$repo_root" || warn "marketplace add failed; it may already be installed"
+    install_or_update_codex_plugin "$repo_root"
   fi
 
   cat <<EOF

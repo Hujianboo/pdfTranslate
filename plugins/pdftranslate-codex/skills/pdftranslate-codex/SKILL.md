@@ -5,7 +5,20 @@ description: Translate pdfTranslate LayoutConfig files or PDFs using Codex itsel
 
 # pdfTranslate Codex Workflow
 
-Use this skill from the pdfTranslate repository root.
+Always run the workflow from the installed pdfTranslate repository root, not from
+the cached plugin directory under `~/.codex/plugins/cache`.
+
+Repository root resolution order:
+
+1. If the current working directory contains `pyproject.toml` and
+   `plugins/pdftranslate-codex`, use it.
+2. Otherwise, use the configured Codex marketplace source:
+   `[marketplaces.pdftranslate-local].source` in `~/.codex/config.toml`.
+3. If that is unavailable, fall back to `~/pdfTranslate`.
+
+Do not scan the whole filesystem for the repository. Once the root is resolved,
+run commands with that directory as the working directory and call the scripts
+through `plugins/pdftranslate-codex/scripts/...`.
 
 ## Goal
 
@@ -16,6 +29,7 @@ Translate pdfTranslate `LayoutConfig` JSON with Codex as the translation engine.
 For a PDF input, prefer the wrapper script:
 
 ```bash
+cd <pdfTranslate-repo-root>
 uv run python plugins/pdftranslate-codex/scripts/translate_pdf_with_codex.py <input-pdf> \
   --output-dir output/pdf \
   --target-language zh
@@ -37,6 +51,7 @@ Use the manual layout workflow only when the user wants to inspect or edit inter
 1. Prepare Codex translation batches:
 
 ```bash
+cd <pdfTranslate-repo-root>
 uv run python plugins/pdftranslate-codex/scripts/codex_layout_translation.py prepare <layout-json> \
   --output-dir tmp/codex-translation/<layout-stem> \
   --target-language zh
@@ -55,6 +70,7 @@ Preserve every block id exactly. It is acceptable for a response to omit a block
 3. Merge responses back into a translated layout:
 
 ```bash
+cd <pdfTranslate-repo-root>
 uv run python plugins/pdftranslate-codex/scripts/codex_layout_translation.py apply tmp/codex-translation/<layout-stem>/manifest.json \
   --output tmp/layout/<layout-stem>.layout.zh.json
 ```
@@ -62,6 +78,7 @@ uv run python plugins/pdftranslate-codex/scripts/codex_layout_translation.py app
 4. Build the translated PDF:
 
 ```bash
+cd <pdfTranslate-repo-root>
 uv run pdftranslate build-pdf tmp/layout/<layout-stem>.layout.zh.json \
   --output-dir tmp/pdf \
   --allow-missing-translations
@@ -72,6 +89,7 @@ uv run pdftranslate build-pdf tmp/layout/<layout-stem>.layout.zh.json \
 If the user provides a PDF, first parse it:
 
 ```bash
+cd <pdfTranslate-repo-root>
 uv run pdftranslate parse-layout <pdf-or-directory> \
   --output tmp/layout \
   --assets-dir tmp/assets

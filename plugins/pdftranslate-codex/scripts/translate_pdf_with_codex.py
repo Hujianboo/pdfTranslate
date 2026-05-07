@@ -64,7 +64,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--work-dir",
-        help="Temporary working directory. Deleted by default unless --keep-work-dir is set.",
+        help=(
+            "Temporary working directory. Relative paths are resolved under the "
+            "repository root. Deleted by default unless --keep-work-dir is set."
+        ),
     )
     parser.add_argument(
         "--keep-work-dir",
@@ -97,12 +100,8 @@ def translate_pdf(args: argparse.Namespace) -> None:
     output_pdf = _resolve_output_pdf(input_pdf, args.output, Path(args.output_dir))
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
 
-    owns_work_dir = args.work_dir is None
-    work_dir = (
-        Path(tempfile.mkdtemp(prefix=f"pdftranslate-codex-{input_pdf.stem}-"))
-        if owns_work_dir
-        else Path(args.work_dir)
-    )
+    work_dir, owns_work_dir = _resolve_work_dir(input_pdf, args.work_dir)
+    _validate_work_dir_for_sandbox(work_dir, args.codex_sandbox)
     layout_dir = work_dir / "layout"
     assets_dir = work_dir / "assets"
     batch_dir = work_dir / "codex-translation"
@@ -166,6 +165,44 @@ def _resolve_output_pdf(input_pdf: Path, output: str | None, output_dir: Path) -
         candidate = Path(output)
         return candidate / default_name if candidate.is_dir() else candidate
     return output_dir / default_name
+
+
+def _resolve_work_dir(input_pdf: Path, work_dir: str | None) -> tuple[Path, bool]:
+    if work_dir:
+        requested = Path(work_dir)
+        return (requested if requested.is_absolute() else REPO_ROOT / requested), False
+
+    tmp_root = REPO_ROOT / "tmp"
+    tmp_root.mkdir(parents=True, exist_ok=True)
+    return (
+        Path(
+            tempfile.mkdtemp(
+                prefix=f"pdftranslate-codex-{input_pdf.stem}-",
+                dir=tmp_root,
+            )
+        ),
+        True,
+    )
+
+
+def _validate_work_dir_for_sandbox(work_dir: Path, sandbox: str) -> None:
+    if sandbox != "workspace-write":
+        return
+    if _is_relative_to(work_dir.resolve(), REPO_ROOT.resolve()):
+        return
+    raise ValueError(
+        "--work-dir must be inside the pdfTranslate repository when using "
+        "--codex-sandbox workspace-write. Use a relative work dir such as "
+        "tmp/pdftranslate-run, or pass --codex-sandbox danger-full-access."
+    )
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
 
 
 def _parse_layout(

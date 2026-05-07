@@ -10,7 +10,7 @@
 
 ## **安装**
 
-一条命令安装：
+一条命令安装或更新：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Hujianboo/pdfTranslate/main/scripts/install.sh | bash
@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/Hujianboo/pdfTranslate/main/scripts
 bash scripts/install.sh
 ```
 
-安装脚本会自动复用或安装 `uv`，同步 Python 依赖，并添加 `pdfTranslate Codex` 到 Codex plugin marketplace。
+安装脚本会自动复用或安装 `uv`，拉取已有 `~/pdfTranslate` 仓库的最新代码，同步 Python 依赖，并更新 `pdfTranslate Codex` 的 Codex plugin marketplace 缓存。
 
 安装完成后：
 

@@ -5,6 +5,8 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 from pdftranslate.layout_io import load_layout_config
 from tests.fixtures import minimal_layout_dict
 
@@ -104,6 +106,56 @@ def test_codex_pdf_workflow_script_exposes_customizable_io_options():
     assert "--output-dir" in result.stdout
     assert "--work-dir" in result.stdout
     assert "--keep-work-dir" in result.stdout
+
+
+def test_default_work_dir_is_inside_repo_tmp(monkeypatch, tmp_path):
+    module = _load_pdf_workflow_module()
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+
+    work_dir, owns_work_dir = module._resolve_work_dir(
+        tmp_path / "paper.pdf",
+        None,
+    )
+
+    assert owns_work_dir is True
+    assert work_dir.parent == tmp_path / "tmp"
+    assert work_dir.name.startswith("pdftranslate-codex-paper-")
+
+
+def test_relative_work_dir_is_resolved_under_repo(monkeypatch, tmp_path):
+    module = _load_pdf_workflow_module()
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+
+    work_dir, owns_work_dir = module._resolve_work_dir(
+        tmp_path / "paper.pdf",
+        "tmp/pdftranslate-run",
+    )
+
+    assert owns_work_dir is False
+    assert work_dir == tmp_path / "tmp/pdftranslate-run"
+
+
+def test_workspace_write_rejects_external_work_dir(monkeypatch, tmp_path):
+    module = _load_pdf_workflow_module()
+    repo_root = tmp_path / "repo"
+    external = tmp_path / "external"
+    repo_root.mkdir()
+    external.mkdir()
+    monkeypatch.setattr(module, "REPO_ROOT", repo_root)
+
+    with pytest.raises(ValueError, match="--work-dir must be inside"):
+        module._validate_work_dir_for_sandbox(external, "workspace-write")
+
+
+def test_external_work_dir_is_allowed_with_full_access(monkeypatch, tmp_path):
+    module = _load_pdf_workflow_module()
+    repo_root = tmp_path / "repo"
+    external = tmp_path / "external"
+    repo_root.mkdir()
+    external.mkdir()
+    monkeypatch.setattr(module, "REPO_ROOT", repo_root)
+
+    module._validate_work_dir_for_sandbox(external, "danger-full-access")
 
 
 def test_codex_launcher_uses_direct_codex_when_available(monkeypatch):
