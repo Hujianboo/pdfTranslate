@@ -1,9 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 160" role="img" aria-label="pdfTranslate Codex logo">
-  <rect width="512" height="160" rx="28" fill="#eff6ff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 160" role="img" aria-label="pdfTranslate logo">
   <rect x="28" y="28" width="104" height="104" rx="22" fill="#2563eb"/>
   <path d="M58 45h34l18 18v52H58z" fill="#ffffff"/>
   <path d="M92 45v20h18z" fill="#bfdbfe"/>
-  <path d="M68 78h33v7H68zm0 15h25v7H68z" fill="#1d4ed8"/>
+  <path d="M66 78h35v7H66zm0 16h30v7H66z" fill="#1d4ed8"/>
   <text x="156" y="78" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700" fill="#172554">pdfTranslate</text>
-  <text x="156" y="113" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="600" fill="#2563eb">Codex workflow</text>
+  <text x="156" y="113" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="600" fill="#2563eb">PDF translation workflow</text>
 </svg>

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_URL="${PDFTRANSLATE_REPO_URL:-https://github.com/hujianbo/pdfTranslate.git}"
+REPO_URL="${PDFTRANSLATE_REPO_URL:-https://github.com/Hujianboo/pdfTranslate.git}"
 INSTALL_DIR="${PDFTRANSLATE_INSTALL_DIR:-$HOME/pdfTranslate}"
 
 info() {

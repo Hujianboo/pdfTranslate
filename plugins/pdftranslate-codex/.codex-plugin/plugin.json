@@ -2,8 +2,8 @@
   "name": "pdftranslate-codex",
   "version": "0.1.0",
   "description": "Codex workflow for translating pdfTranslate LayoutConfig files without .env model credentials.",
-  "homepage": "https://github.com/hujianbo/pdfTranslate",
-  "repository": "https://github.com/hujianbo/pdfTranslate",
+  "homepage": "https://github.com/Hujianboo/pdfTranslate",
+  "repository": "https://github.com/Hujianboo/pdfTranslate",
   "license": "MIT",
   "keywords": [
     "pdf",
@@ -28,6 +28,6 @@
     ],
     "brandColor": "#2563EB",
     "composerIcon": "./assets/icon.svg",
-    "logo": "./assets/pdftranslate-logo.png"
+    "logo": "./assets/logo.svg"
   }
 }
