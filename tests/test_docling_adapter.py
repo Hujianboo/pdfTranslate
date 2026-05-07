@@ -1,6 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from pdftranslate.docling_adapter import parse_pdf_layout
 
 
@@ -299,6 +301,46 @@ def test_docling_pdf_pipeline_defaults_to_ocr_disabled():
     options = build_pdf_pipeline_options()
 
     assert options.do_ocr is False
+
+
+def test_docling_pdf_pipeline_uses_cached_hf_snapshot(tmp_path, monkeypatch):
+    from pdftranslate import docling_adapter
+    from pdftranslate.docling_adapter import build_pdf_pipeline_options
+
+    snapshot = (
+        tmp_path
+        / "hub"
+        / docling_adapter.DOCLING_MODELS_CACHE_NAME
+        / "snapshots"
+        / "abc123"
+    )
+    (snapshot / docling_adapter.DOCLING_LAYOUT_MODEL_PATH).mkdir(parents=True)
+    table_dir = snapshot / docling_adapter.DOCLING_TABLE_MODEL_PATH
+    table_dir.mkdir(parents=True)
+    (table_dir / "tm_config.json").write_text("{}", encoding="utf-8")
+    refs_dir = tmp_path / "hub" / docling_adapter.DOCLING_MODELS_CACHE_NAME / "refs"
+    refs_dir.mkdir(parents=True)
+    (refs_dir / docling_adapter.DOCLING_MODELS_REVISION).write_text(
+        "abc123",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HF_HOME", str(tmp_path))
+
+    options = build_pdf_pipeline_options()
+
+    assert options.artifacts_path == snapshot
+
+
+def test_docling_pdf_pipeline_rejects_invalid_configured_artifacts(
+    tmp_path,
+    monkeypatch,
+):
+    from pdftranslate.docling_adapter import build_pdf_pipeline_options
+
+    monkeypatch.setenv("PDFTRANSLATE_DOCLING_ARTIFACTS_DIR", str(tmp_path))
+
+    with pytest.raises(RuntimeError, match="PDFTRANSLATE_DOCLING_ARTIFACTS_DIR"):
+        build_pdf_pipeline_options()
 
 
 def test_docling_table_items_map_to_table_blocks_with_bbox():

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import ctypes
 from dataclasses import replace
+import os
 from pathlib import Path
+import time
 from typing import Any
 
 from docling.datamodel.base_models import InputFormat
@@ -26,6 +28,13 @@ from pdftranslate.layout import (
 )
 
 
+DOCLING_MODELS_REPO_ID = "ds4sd/docling-models"
+DOCLING_MODELS_REVISION = "v2.0.1"
+DOCLING_MODELS_CACHE_NAME = "models--ds4sd--docling-models"
+DOCLING_LAYOUT_MODEL_PATH = "model_artifacts/layout/beehive_v0.0.5_pt"
+DOCLING_TABLE_MODEL_PATH = "model_artifacts/tableformer"
+
+
 def parse_pdf_layout(pdf_path: str | Path) -> LayoutConfig:
     input_path = Path(pdf_path)
     result = build_document_converter().convert(input_path)
@@ -36,8 +45,96 @@ def parse_pdf_layout(pdf_path: str | Path) -> LayoutConfig:
 
 def build_pdf_pipeline_options() -> PdfPipelineOptions:
     options = PdfPipelineOptions()
+    options.artifacts_path = _resolve_docling_artifacts_path()
     options.do_ocr = False
     return options
+
+
+def _resolve_docling_artifacts_path() -> Path:
+    configured = os.environ.get("PDFTRANSLATE_DOCLING_ARTIFACTS_DIR")
+    if configured:
+        artifacts_path = Path(configured).expanduser()
+        if _has_docling_artifacts(artifacts_path):
+            return artifacts_path
+        raise RuntimeError(
+            "PDFTRANSLATE_DOCLING_ARTIFACTS_DIR does not contain Docling model "
+            f"artifacts: {artifacts_path}"
+        )
+
+    cached = _cached_docling_artifacts_path()
+    if cached is not None:
+        return cached
+
+    return _download_docling_artifacts_with_retries()
+
+
+def _cached_docling_artifacts_path() -> Path | None:
+    cache_root = Path(
+        os.environ.get(
+            "HF_HOME",
+            str(Path.home() / ".cache" / "huggingface"),
+        )
+    ).expanduser()
+    repo_cache = cache_root / "hub" / DOCLING_MODELS_CACHE_NAME
+    revision_ref = repo_cache / "refs" / DOCLING_MODELS_REVISION
+    candidates: list[Path] = []
+
+    if revision_ref.is_file():
+        revision = revision_ref.read_text(encoding="utf-8").strip()
+        if revision:
+            candidates.append(repo_cache / "snapshots" / revision)
+
+    snapshots_dir = repo_cache / "snapshots"
+    if snapshots_dir.is_dir():
+        candidates.extend(
+            sorted(
+                (path for path in snapshots_dir.iterdir() if path.is_dir()),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+        )
+
+    for candidate in candidates:
+        if _has_docling_artifacts(candidate):
+            return candidate
+    return None
+
+
+def _download_docling_artifacts_with_retries(
+    attempts: int = 3,
+    delay_seconds: float = 3.0,
+) -> Path:
+    from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
+
+    errors: list[str] = []
+    for attempt in range(1, attempts + 1):
+        try:
+            artifacts_path = StandardPdfPipeline.download_models_hf()
+        except Exception as error:  # noqa: BLE001 - preserve upstream network detail
+            errors.append(f"attempt {attempt}: {error}")
+            if attempt < attempts:
+                time.sleep(delay_seconds * attempt)
+            continue
+
+        artifacts_path = Path(artifacts_path)
+        if _has_docling_artifacts(artifacts_path):
+            return artifacts_path
+        errors.append(f"attempt {attempt}: incomplete artifacts at {artifacts_path}")
+
+    joined = "; ".join(errors)
+    raise RuntimeError(
+        "failed to download Docling model artifacts from Hugging Face. "
+        "Check the network, pre-download the models, or set "
+        "PDFTRANSLATE_DOCLING_ARTIFACTS_DIR to a local ds4sd/docling-models "
+        f"snapshot. Details: {joined}"
+    )
+
+
+def _has_docling_artifacts(path: Path) -> bool:
+    return (
+        (path / DOCLING_LAYOUT_MODEL_PATH).is_dir()
+        and (path / DOCLING_TABLE_MODEL_PATH / "tm_config.json").is_file()
+    )
 
 
 def build_document_converter() -> DocumentConverter:

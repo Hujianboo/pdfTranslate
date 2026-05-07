@@ -42,7 +42,8 @@ User-customizable options:
 - `--output-layout <json>` keeps the translated `LayoutConfig` at a chosen path.
 - `--work-dir <dir>` chooses where temporary layout/assets/batches/logs are stored.
 - `--keep-work-dir` keeps temporary files for debugging. Without it, temporary files are deleted after the PDF is built.
-- `--no-images`, `--debug-boxes`, `--batch-size`, `--batch-chars`, and `--codex-model` customize the pipeline.
+- `--no-images`, `--debug-boxes`, `--batch-size`, `--batch-chars`, `--codex-model`, and `--codex-reasoning-effort` customize the pipeline.
+- The wrapper defaults to larger Codex-oriented batches and `--codex-reasoning-effort low`; increase reasoning only if translations are poor.
 
 ## Layout Translation
 

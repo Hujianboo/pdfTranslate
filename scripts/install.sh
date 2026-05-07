@@ -91,6 +91,21 @@ ensure_codex() {
   warn "Install Codex CLI manually, then run: codex login"
 }
 
+warm_docling_models() {
+  info "Preparing Docling model cache"
+  if uv run python - <<'PY'
+from pdftranslate.docling_adapter import build_pdf_pipeline_options
+
+options = build_pdf_pipeline_options()
+print(options.artifacts_path)
+PY
+  then
+    return 0
+  fi
+
+  warn "Docling model warmup failed; PDF translation will retry on first use"
+}
+
 install_or_update_codex_plugin() {
   local repo_root="$1"
   local plugin_cache="$HOME/.codex/plugins/cache/$MARKETPLACE_NAME"
@@ -108,6 +123,7 @@ main() {
   ensure_uv
   info "Installing Python dependencies"
   uv sync
+  warm_docling_models
 
   ensure_codex
   if has_command codex; then

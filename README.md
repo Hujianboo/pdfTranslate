@@ -88,8 +88,9 @@ uv run python plugins/pdftranslate-codex/scripts/translate_pdf_with_codex.py \
 - `--keep-work-dir`：保留中间文件和日志；默认完成后删除。
 - `--no-images`：跳过图片/表格/公式区域截图。
 - `--debug-boxes`：输出调试框，方便检查排版。
-- `--batch-size` / `--batch-chars`：控制翻译批次大小。
+- `--batch-size` / `--batch-chars`：控制翻译批次大小，一键脚本默认使用较大的 Codex 批次以减少等待。
 - `--codex-model <model>`：指定 `codex exec` 使用的模型。
+- `--codex-reasoning-effort <minimal|low|medium|high|xhigh>`：指定内部 `codex exec` 推理强度，默认 `low`。
 
 ## **基础 CLI**
 

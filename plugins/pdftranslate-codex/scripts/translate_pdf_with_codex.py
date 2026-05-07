@@ -13,14 +13,13 @@ from typing import Any
 
 from pdftranslate.layout_io import load_layout_config
 from pdftranslate.pdf_renderer import RenderOptions, render_layout_pdf
-from pdftranslate.translation import (
-    DEFAULT_MAX_CHARS_PER_TRANSLATION_REQUEST,
-    DEFAULT_MAX_ITEMS_PER_TRANSLATION_REQUEST,
-)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LAYOUT_SCRIPT = REPO_ROOT / "plugins/pdftranslate-codex/scripts/codex_layout_translation.py"
+DEFAULT_CODEX_BATCH_SIZE = 40
+DEFAULT_CODEX_BATCH_CHARS = 12000
+DEFAULT_CODEX_REASONING_EFFORT = "low"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,12 +54,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=DEFAULT_MAX_ITEMS_PER_TRANSLATION_REQUEST,
+        default=DEFAULT_CODEX_BATCH_SIZE,
     )
     parser.add_argument(
         "--batch-chars",
         type=int,
-        default=DEFAULT_MAX_CHARS_PER_TRANSLATION_REQUEST,
+        default=DEFAULT_CODEX_BATCH_CHARS,
     )
     parser.add_argument(
         "--work-dir",
@@ -79,6 +78,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--codex-model",
         help="Optional model name passed to codex exec.",
+    )
+    parser.add_argument(
+        "--codex-reasoning-effort",
+        default=DEFAULT_CODEX_REASONING_EFFORT,
+        choices=["minimal", "low", "medium", "high", "xhigh"],
+        help=(
+            "Reasoning effort for the internal codex exec translator "
+            f"(default: {DEFAULT_CODEX_REASONING_EFFORT})."
+        ),
     )
     parser.add_argument(
         "--codex-sandbox",
@@ -137,6 +145,7 @@ def translate_pdf(args: argparse.Namespace) -> None:
             batch_dir,
             log_dir,
             args.codex_model,
+            args.codex_reasoning_effort,
             args.codex_sandbox,
         )
         _validate_responses(batch_dir / "manifest.json", batch_dir)
@@ -264,6 +273,7 @@ def _run_codex_translation(
     batch_dir: Path,
     log_dir: Path,
     model: str | None,
+    reasoning_effort: str,
     sandbox: str,
 ) -> None:
     prompt = (
@@ -285,6 +295,9 @@ def _run_codex_translation(
         str(REPO_ROOT),
         "-s",
         sandbox,
+        "--ephemeral",
+        "-c",
+        f'model_reasoning_effort="{reasoning_effort}"',
         "--output-last-message",
         str(batch_dir / "codex-exec-summary.txt"),
     ]

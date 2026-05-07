@@ -108,6 +108,43 @@ def test_codex_pdf_workflow_script_exposes_customizable_io_options():
     assert "--keep-work-dir" in result.stdout
 
 
+def test_codex_pdf_workflow_defaults_to_larger_batches_and_low_reasoning():
+    module = _load_pdf_workflow_module()
+    args = module.build_parser().parse_args(["paper.pdf"])
+
+    assert args.batch_size == 40
+    assert args.batch_chars == 12000
+    assert args.codex_reasoning_effort == "low"
+
+
+def test_internal_codex_exec_uses_low_reasoning_and_ephemeral(monkeypatch, tmp_path):
+    module = _load_pdf_workflow_module()
+    commands = []
+
+    monkeypatch.setattr(module, "_codex_launcher", lambda codex: [codex])
+
+    def fake_run(command, log_path):
+        commands.append((command, log_path))
+
+    monkeypatch.setattr(module, "_run", fake_run)
+
+    module._run_codex_translation(
+        "codex",
+        tmp_path / "manifest.json",
+        tmp_path / "codex-translation",
+        tmp_path / "logs",
+        None,
+        "low",
+        "workspace-write",
+    )
+
+    command, log_path = commands[0]
+    assert "--ephemeral" in command
+    assert "-c" in command
+    assert 'model_reasoning_effort="low"' in command
+    assert log_path == tmp_path / "logs" / "codex-exec.log"
+
+
 def test_default_work_dir_is_inside_repo_tmp(monkeypatch, tmp_path):
     module = _load_pdf_workflow_module()
     monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
