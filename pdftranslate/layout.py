@@ -142,6 +142,8 @@ class TableInfo:
     cells: list[TableCellInfo] = field(default_factory=list)
     ref: str | None = None
     caption: str | None = None
+    mime_type: str | None = None
+    asset_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -153,6 +155,10 @@ class TableInfo:
             data["ref"] = self.ref
         if self.caption is not None:
             data["caption"] = self.caption
+        if self.mime_type is not None:
+            data["mime_type"] = self.mime_type
+        if self.asset_path is not None:
+            data["asset_path"] = self.asset_path
         return data
 
 
@@ -179,6 +185,8 @@ class FormulaInfo:
     text: str | None = None
     ref: str | None = None
     formula_type: str | None = None
+    mime_type: str | None = None
+    asset_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {}
@@ -188,6 +196,10 @@ class FormulaInfo:
             data["ref"] = self.ref
         if self.formula_type is not None:
             data["formula_type"] = self.formula_type
+        if self.mime_type is not None:
+            data["mime_type"] = self.mime_type
+        if self.asset_path is not None:
+            data["asset_path"] = self.asset_path
         return data
 
 

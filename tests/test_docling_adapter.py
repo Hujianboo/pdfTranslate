@@ -168,9 +168,9 @@ def test_parse_pdf_layout_maps_docling_text_items(tmp_path):
     assert data["text"] == "Text block mapping"
     assert data["bbox"].keys() == {"x0", "y0", "x1", "y1"}
     assert data["style"] == {
-        "font_name": None,
-        "font_size": None,
-        "color": None,
+        "font_name": "Helvetica",
+        "font_size": 24.0,
+        "color": "#000000",
         "rotation": 0,
     }
     assert data["translatable"] is True

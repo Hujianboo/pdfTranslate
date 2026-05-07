@@ -119,6 +119,8 @@ def _table_info_from_dict(data: dict[str, Any]) -> TableInfo:
         cells=[_table_cell_from_dict(cell) for cell in data.get("cells", [])],
         ref=data.get("ref"),
         caption=data.get("caption"),
+        mime_type=data.get("mime_type"),
+        asset_path=data.get("asset_path"),
     )
 
 
@@ -146,6 +148,8 @@ def _formula_info_from_dict(data: dict[str, Any]) -> FormulaInfo:
         text=data.get("text"),
         ref=data.get("ref"),
         formula_type=data.get("formula_type"),
+        mime_type=data.get("mime_type"),
+        asset_path=data.get("asset_path"),
     )
 
 

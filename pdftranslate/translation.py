@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
+import time
 from typing import Any, Callable, Mapping, Protocol
 from urllib import request
 
@@ -13,6 +14,10 @@ from pdftranslate.layout import LayoutConfig, TextBlock
 DEFAULT_TARGET_LANGUAGE = "zh"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_MAX_ITEMS_PER_TRANSLATION_REQUEST = 12
+DEFAULT_MAX_CHARS_PER_TRANSLATION_REQUEST = 4500
+DEFAULT_TRANSLATION_MAX_RETRIES = 3
+DEFAULT_TRANSLATION_RETRY_DELAY_SECONDS = 5.0
 
 
 class TranslationError(Exception):
@@ -73,6 +78,9 @@ class MockTranslationProvider:
 
 
 PostJson = Callable[[str, dict[str, str], dict[str, Any]], dict[str, Any]]
+TranslationProgress = Callable[[int, int, int], None]
+TranslationRetryProgress = Callable[[int, int, int, Exception, float], None]
+Sleep = Callable[[float], None]
 
 
 class OpenAICompatibleTranslationProvider:
@@ -132,14 +140,41 @@ def translate_layout_config(
     config: LayoutConfig,
     provider: TranslationProvider,
     target_language: str = DEFAULT_TARGET_LANGUAGE,
+    *,
+    max_items_per_request: int = DEFAULT_MAX_ITEMS_PER_TRANSLATION_REQUEST,
+    max_chars_per_request: int = DEFAULT_MAX_CHARS_PER_TRANSLATION_REQUEST,
+    max_retries: int = DEFAULT_TRANSLATION_MAX_RETRIES,
+    retry_delay_seconds: float = DEFAULT_TRANSLATION_RETRY_DELAY_SECONDS,
+    on_batch_complete: TranslationProgress | None = None,
+    on_batch_retry: TranslationRetryProgress | None = None,
+    sleep: Sleep = time.sleep,
 ) -> LayoutConfig:
     items = _translation_items_for_layout(config)
-    translations = {
-        result.block_id: result.translated_text
-        for result in provider.translate(
-            TranslationRequest(target_language=target_language, items=items)
+    translations: dict[str, str] = {}
+    batches = _translation_batches(
+        items,
+        max_items_per_request=max_items_per_request,
+        max_chars_per_request=max_chars_per_request,
+    )
+    for batch_index, batch in enumerate(batches, start=1):
+        request = TranslationRequest(target_language=target_language, items=batch)
+        translations.update(
+            {
+                result.block_id: result.translated_text
+                for result in _translate_batch_with_retries(
+                    provider,
+                    request,
+                    batch_index=batch_index,
+                    total_batches=len(batches),
+                    max_retries=max_retries,
+                    retry_delay_seconds=retry_delay_seconds,
+                    on_batch_retry=on_batch_retry,
+                    sleep=sleep,
+                )
+            }
         )
-    }
+        if on_batch_complete is not None:
+            on_batch_complete(batch_index, len(batches), len(batch))
 
     return replace(
         config,
@@ -153,6 +188,63 @@ def translate_layout_config(
     )
 
 
+def _translate_batch_with_retries(
+    provider: TranslationProvider,
+    request: TranslationRequest,
+    *,
+    batch_index: int,
+    total_batches: int,
+    max_retries: int,
+    retry_delay_seconds: float,
+    on_batch_retry: TranslationRetryProgress | None,
+    sleep: Sleep,
+) -> list[TranslationResult]:
+    if max_retries < 0:
+        raise TranslationError("max_retries must be at least 0")
+    if retry_delay_seconds < 0:
+        raise TranslationError("retry_delay_seconds must be at least 0")
+
+    attempts = max_retries + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return provider.translate(request)
+        except Exception as error:
+            if attempt >= attempts:
+                raise TranslationError(
+                    f"translation batch {batch_index}/{total_batches} failed "
+                    f"after {attempt} attempts: {error}"
+                ) from error
+            delay = _retry_delay_seconds(error, retry_delay_seconds, attempt)
+            if on_batch_retry is not None:
+                on_batch_retry(batch_index, total_batches, attempt, error, delay)
+            sleep(delay)
+    raise AssertionError("unreachable")
+
+
+def _retry_delay_seconds(
+    error: Exception,
+    base_delay_seconds: float,
+    attempt: int,
+) -> float:
+    retry_after = _retry_after_seconds(error)
+    if retry_after is not None:
+        return retry_after
+    return base_delay_seconds * (2 ** (attempt - 1))
+
+
+def _retry_after_seconds(error: Exception) -> float | None:
+    headers = getattr(error, "headers", None)
+    if headers is None:
+        return None
+    retry_after = headers.get("Retry-After")
+    if retry_after is None:
+        return None
+    try:
+        return max(float(retry_after), 0.0)
+    except ValueError:
+        return None
+
+
 def _translation_items_for_layout(config: LayoutConfig) -> list[TranslationItem]:
     return [
         TranslationItem(block_id=block.id, text=block.text)
@@ -160,6 +252,38 @@ def _translation_items_for_layout(config: LayoutConfig) -> list[TranslationItem]
         for block in page.blocks
         if _is_translatable_text_block(block)
     ]
+
+
+def _translation_batches(
+    items: list[TranslationItem],
+    *,
+    max_items_per_request: int,
+    max_chars_per_request: int,
+) -> list[list[TranslationItem]]:
+    if max_items_per_request < 1:
+        raise TranslationError("max_items_per_request must be at least 1")
+    if max_chars_per_request < 1:
+        raise TranslationError("max_chars_per_request must be at least 1")
+
+    batches: list[list[TranslationItem]] = []
+    current_batch: list[TranslationItem] = []
+    current_chars = 0
+    for item in items:
+        item_chars = len(item.text)
+        would_exceed_count = len(current_batch) >= max_items_per_request
+        would_exceed_chars = (
+            current_batch and current_chars + item_chars > max_chars_per_request
+        )
+        if would_exceed_count or would_exceed_chars:
+            batches.append(current_batch)
+            current_batch = []
+            current_chars = 0
+        current_batch.append(item)
+        current_chars += item_chars
+
+    if current_batch:
+        batches.append(current_batch)
+    return batches
 
 
 def _block_with_translation(block: object, translations: dict[str, str]) -> object:

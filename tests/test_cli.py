@@ -106,6 +106,25 @@ def test_extract_command_creates_non_empty_markdown(tmp_path):
     assert output_path.read_text(encoding="utf-8").strip()
 
 
+def test_extract_command_writes_into_output_directory(tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    exit_code = main(
+        [
+            "extract",
+            "assets/1603.08767v1.pdf",
+            "--output",
+            str(out_dir),
+        ]
+    )
+
+    expected = out_dir / "1603.08767v1.md"
+    assert exit_code == 0
+    assert expected.exists()
+    assert expected.read_text(encoding="utf-8").strip()
+
+
 def test_extract_command_rejects_missing_input(tmp_path, capsys):
     output_path = tmp_path / "missing.md"
 
@@ -139,11 +158,53 @@ def test_parse_layout_command_creates_json_file(tmp_path, monkeypatch):
             str(input_path),
             "--output",
             str(output_path),
+            "--no-images",
         ]
     )
 
     assert exit_code == 0
     assert output_path.exists()
+    assert json.loads(output_path.read_text(encoding="utf-8"))
+
+
+def test_parse_layout_command_runs_image_extraction_by_default(tmp_path, monkeypatch):
+    input_path = tmp_path / "sample.pdf"
+    output_path = tmp_path / "nested" / "layout.json"
+    input_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    monkeypatch.setattr(
+        "pdftranslate.docling_adapter.parse_pdf_layout",
+        lambda path: layout_config_from_dict(minimal_layout_dict()),
+    )
+    captured: dict = {}
+
+    def fake_extract(pdf_path, assets_dir, layout_config, base_dir=None):
+        captured["pdf_path"] = pdf_path
+        captured["assets_dir"] = assets_dir
+        captured["base_dir"] = base_dir
+        return layout_config
+
+    monkeypatch.setattr(
+        "pdftranslate.image_assets.extract_pdf_image_assets",
+        fake_extract,
+    )
+
+    assets_root = tmp_path / "assets-root"
+    exit_code = main(
+        [
+            "parse-layout",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--assets-dir",
+            str(assets_root),
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert captured["pdf_path"] == input_path
+    assert captured["assets_dir"] == assets_root / "sample" / "images"
+    assert captured["base_dir"] == output_path.parent
     assert json.loads(output_path.read_text(encoding="utf-8"))
 
 
@@ -185,6 +246,7 @@ def test_parse_layout_command_outputs_layout_schema_contract(tmp_path, monkeypat
             str(input_path),
             "--output",
             str(output_path),
+            "--no-images",
         ]
     )
 
@@ -228,6 +290,7 @@ def test_parse_layout_command_outputs_table_and_formula_blocks(tmp_path, monkeyp
             str(input_path),
             "--output",
             str(output_path),
+            "--no-images",
         ]
     )
 
@@ -520,6 +583,205 @@ def test_translate_layout_command_openai_without_key_exits_nonzero(
     assert not output_path.exists()
 
 
+def test_translate_pdf_command_runs_full_pipeline_and_cleans_temp_files(
+    tmp_path,
+    monkeypatch,
+):
+    input_path = tmp_path / "paper.pdf"
+    output_path = tmp_path / "paper.zh.pdf"
+    work_dir = tmp_path / "work"
+    input_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    calls = []
+
+    def fake_parse(path):
+        calls.append(("parse", path))
+        data = minimal_layout_dict()
+        data["source_file"] = str(path)
+        return layout_config_from_dict(data)
+
+    def fake_extract(pdf_path, assets_dir, layout_config, base_dir=None):
+        calls.append(("extract", pdf_path, assets_dir, base_dir))
+        assets_dir.mkdir(parents=True)
+        (assets_dir / "p1_i1.png").write_bytes(base64.b64decode(_ONE_PIXEL_PNG))
+        return layout_config
+
+    def fake_render_layout_pdf(config, output, options=None):
+        calls.append(("render", config.source_file, output, options.asset_base_dir))
+        Path(output).write_bytes(b"%PDF-1.4\n%%EOF\n")
+
+    monkeypatch.setattr("pdftranslate.docling_adapter.parse_pdf_layout", fake_parse)
+    monkeypatch.setattr(
+        "pdftranslate.image_assets.extract_pdf_image_assets",
+        fake_extract,
+    )
+    monkeypatch.setattr(
+        "pdftranslate.pdf_renderer.render_layout_pdf",
+        fake_render_layout_pdf,
+    )
+
+    exit_code = main(
+        [
+            "translate-pdf",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--work-dir",
+            str(work_dir),
+            "--provider",
+            "mock",
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert not work_dir.exists()
+    assert [call[0] for call in calls] == ["parse", "extract", "render"]
+    assert calls[2][1] == str(input_path)
+
+
+def test_translate_pdf_command_allows_missing_translated_text(
+    tmp_path,
+    monkeypatch,
+):
+    input_path = tmp_path / "paper.pdf"
+    output_path = tmp_path / "paper.zh.pdf"
+    work_dir = tmp_path / "work"
+    input_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    calls = []
+
+    def fake_parse(path):
+        data = minimal_layout_dict()
+        data["source_file"] = str(path)
+        return layout_config_from_dict(data)
+
+    def fake_translate_layout_config(config, *args, **kwargs):
+        return config
+
+    def fake_render_layout_pdf(config, output, options=None):
+        calls.append(("render", config.source_file, output, options.asset_base_dir))
+        Path(output).write_bytes(b"%PDF-1.4\n%%EOF\n")
+
+    monkeypatch.setattr("pdftranslate.docling_adapter.parse_pdf_layout", fake_parse)
+    monkeypatch.setattr(
+        "pdftranslate.translation.translate_layout_config",
+        fake_translate_layout_config,
+    )
+    monkeypatch.setattr(
+        "pdftranslate.pdf_renderer.render_layout_pdf",
+        fake_render_layout_pdf,
+    )
+
+    exit_code = main(
+        [
+            "translate-pdf",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--work-dir",
+            str(work_dir),
+            "--provider",
+            "mock",
+            "--no-images",
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert calls == [("render", str(input_path), output_path, work_dir / "layout")]
+
+
+def test_translate_pdf_command_can_reuse_existing_layout_json(
+    tmp_path,
+    monkeypatch,
+):
+    input_path = tmp_path / "paper.pdf"
+    layout_path = tmp_path / "layout" / "paper.layout.json"
+    output_path = tmp_path / "paper.zh.pdf"
+    work_dir = tmp_path / "work"
+    input_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    data = minimal_layout_dict()
+    data["source_file"] = str(input_path)
+    layout_path.parent.mkdir()
+    layout_path.write_text(
+        layout_config_from_dict(data).to_json(),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fail_parse(path):
+        raise AssertionError("parse should be skipped when --layout is provided")
+
+    def fail_extract(pdf_path, assets_dir, layout_config, base_dir=None):
+        raise AssertionError("image extraction should be skipped for existing layout")
+
+    def fake_render_layout_pdf(config, output, options=None):
+        calls.append(("render", config.source_file, output, options.asset_base_dir))
+        Path(output).write_bytes(b"%PDF-1.4\n%%EOF\n")
+
+    monkeypatch.setattr("pdftranslate.docling_adapter.parse_pdf_layout", fail_parse)
+    monkeypatch.setattr(
+        "pdftranslate.image_assets.extract_pdf_image_assets",
+        fail_extract,
+    )
+    monkeypatch.setattr(
+        "pdftranslate.pdf_renderer.render_layout_pdf",
+        fake_render_layout_pdf,
+    )
+
+    exit_code = main(
+        [
+            "translate-pdf",
+            str(input_path),
+            "--layout",
+            str(layout_path),
+            "--output",
+            str(output_path),
+            "--work-dir",
+            str(work_dir),
+            "--provider",
+            "mock",
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert not work_dir.exists()
+    assert calls == [("render", str(input_path), output_path, layout_path.parent)]
+
+
+def test_translate_pdf_command_reports_parse_failures_without_traceback(
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    input_path = tmp_path / "paper.pdf"
+    output_path = tmp_path / "paper.zh.pdf"
+    input_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+
+    def fail_parse(path):
+        raise RuntimeError("docling model download failed")
+
+    monkeypatch.setattr("pdftranslate.docling_adapter.parse_pdf_layout", fail_parse)
+
+    exit_code = main(
+        [
+            "translate-pdf",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--provider",
+            "mock",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "failed to parse PDF layout" in captured.err
+    assert "docling model download failed" in captured.err
+    assert "Traceback" not in captured.err
+    assert not output_path.exists()
+
+
 def test_non_translation_cli_commands_do_not_require_translation_env(
     tmp_path,
     monkeypatch,
@@ -607,7 +869,7 @@ def test_extract_images_command_rejects_missing_layout_json(tmp_path, capsys):
     assert not output_layout.exists()
 
 
-def test_prepare_layout_command_creates_layout_with_assets_for_pdf_file(
+def test_parse_layout_command_creates_layout_with_assets_for_pdf_file_output_dir(
     tmp_path,
     monkeypatch,
 ):
@@ -635,9 +897,9 @@ def test_prepare_layout_command_creates_layout_with_assets_for_pdf_file(
 
     exit_code = main(
         [
-            "prepare-layout",
+            "parse-layout",
             str(input_path),
-            "--output-dir",
+            "--output",
             str(output_dir),
             "--assets-dir",
             str(assets_dir),
@@ -653,7 +915,7 @@ def test_prepare_layout_command_creates_layout_with_assets_for_pdf_file(
     assert captured["extract_base_dir"] == output_dir
 
 
-def test_prepare_layout_command_processes_pdf_directory(tmp_path, monkeypatch):
+def test_parse_layout_command_processes_pdf_directory(tmp_path, monkeypatch):
     input_dir = tmp_path / "pdfs"
     output_dir = tmp_path / "layouts"
     input_dir.mkdir()
@@ -668,9 +930,9 @@ def test_prepare_layout_command_processes_pdf_directory(tmp_path, monkeypatch):
 
     exit_code = main(
         [
-            "prepare-layout",
+            "parse-layout",
             str(input_dir),
-            "--output-dir",
+            "--output",
             str(output_dir),
             "--no-images",
         ]
@@ -680,6 +942,26 @@ def test_prepare_layout_command_processes_pdf_directory(tmp_path, monkeypatch):
     assert (output_dir / "a.layout.json").exists()
     assert (output_dir / "b.layout.json").exists()
     assert not (output_dir / "notes.layout.json").exists()
+
+
+def test_parse_layout_command_uses_tmp_defaults(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    input_path = tmp_path / "paper.pdf"
+    input_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+
+    monkeypatch.setattr(
+        "pdftranslate.docling_adapter.parse_pdf_layout",
+        lambda path: layout_config_from_dict(minimal_layout_dict()),
+    )
+    monkeypatch.setattr(
+        "pdftranslate.image_assets.extract_pdf_image_assets",
+        lambda pdf_path, assets_dir, layout_config, base_dir=None: layout_config,
+    )
+
+    exit_code = main(["parse-layout", str(input_path)])
+
+    assert exit_code == 0
+    assert (tmp_path / "tmp" / "layout" / "paper.layout.json").exists()
 
 
 def test_build_pdf_command_uses_default_output_and_requires_translations(tmp_path):
@@ -705,6 +987,22 @@ def test_build_pdf_command_uses_default_output_and_requires_translations(tmp_pat
     assert exit_code == 0
     assert output_path.exists()
     assert output_path.stat().st_size > 0
+
+
+def test_build_pdf_command_uses_tmp_default_output_dir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    input_path = tmp_path / "sample.layout.zh.json"
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["translated_text"] = "译文"
+    input_path.write_text(
+        layout_config_from_dict(data).to_json(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["build-pdf", str(input_path)])
+
+    assert exit_code == 0
+    assert (tmp_path / "tmp" / "pdf" / "sample.zh.pdf").exists()
 
 
 def test_build_pdf_command_fails_missing_translations_by_default(tmp_path, capsys):

@@ -178,6 +178,20 @@ def test_table_info_serializes_row_col_counts_and_cells():
     assert data["cells"][0]["text"] == "Header"
 
 
+def test_table_info_serializes_asset_path_when_present():
+    info = TableInfo(
+        num_rows=1,
+        num_cols=1,
+        mime_type="image/png",
+        asset_path="tmp/assets/sample/tables/p1_t1.png",
+    )
+
+    data = info.to_dict()
+
+    assert data["mime_type"] == "image/png"
+    assert data["asset_path"] == "tmp/assets/sample/tables/p1_t1.png"
+
+
 def test_table_cell_info_serializes_ranges_spans_headers_and_optional_bbox():
     cell = TableCellInfo(
         text="Cell text",
@@ -234,6 +248,19 @@ def test_formula_info_serializes_text_ref_and_formula_type_when_present():
     assert text_formula.to_dict() == {"text": "x+y"}
     assert ref_formula.to_dict() == {"ref": "#/texts/1"}
     assert typed_formula.to_dict() == {"text": "a=b", "formula_type": "inline"}
+
+
+def test_formula_info_serializes_asset_path_when_present():
+    formula = FormulaInfo(
+        text="x+y",
+        mime_type="image/png",
+        asset_path="tmp/assets/sample/formulas/p1_f1.png",
+    )
+
+    data = formula.to_dict()
+
+    assert data["mime_type"] == "image/png"
+    assert data["asset_path"] == "tmp/assets/sample/formulas/p1_f1.png"
 
 
 def test_layout_config_json_excludes_translation_rebuild_and_ocr_fields():

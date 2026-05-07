@@ -90,6 +90,8 @@ def test_layout_config_from_dict_round_trips_old_image_block_without_asset_path(
 def test_layout_config_from_dict_reads_table_block():
     data = minimal_layout_dict()
     data["pages"][0]["blocks"].append(table_block_dict())
+    data["pages"][0]["blocks"][2]["table"]["mime_type"] = "image/png"
+    data["pages"][0]["blocks"][2]["table"]["asset_path"] = "tables/p1_t1.png"
 
     config = layout_config_from_dict(data)
 
@@ -101,11 +103,15 @@ def test_layout_config_from_dict_reads_table_block():
     assert table_block.table.cells[0].text == "Header"
     assert table_block.table.cells[0].column_header is True
     assert table_block.table.cells[0].bbox is not None
+    assert table_block.table.mime_type == "image/png"
+    assert table_block.table.asset_path == "tables/p1_t1.png"
 
 
 def test_layout_config_from_dict_reads_formula_block():
     data = minimal_layout_dict()
     data["pages"][0]["blocks"].append(formula_block_dict())
+    data["pages"][0]["blocks"][2]["formula"]["mime_type"] = "image/png"
+    data["pages"][0]["blocks"][2]["formula"]["asset_path"] = "formulas/p1_f1.png"
 
     config = layout_config_from_dict(data)
 
@@ -114,6 +120,8 @@ def test_layout_config_from_dict_reads_formula_block():
     assert formula_block.id == "p1_f1"
     assert formula_block.formula.text == "E=mc^2"
     assert formula_block.formula.formula_type == "display"
+    assert formula_block.formula.mime_type == "image/png"
+    assert formula_block.formula.asset_path == "formulas/p1_f1.png"
     assert formula_block.translatable is False
 
 

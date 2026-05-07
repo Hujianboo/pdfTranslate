@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from pathlib import Path
 
 from pdftranslate.layout import (
@@ -21,9 +22,12 @@ ZH_SAMPLE_TEXTS = (
 
 DEFAULT_TEXT_FONT_SIZE = 10.0
 MIN_TEXT_FONT_SIZE = 5.0
+# Max initial guess when inferring from bbox height (no layout font_size).
+MAX_SEED_FONT_SIZE = 48.0
 LINE_HEIGHT_RATIO = 1.15
 FONT_SIZE_STEP = 0.5
 NARROW_TEXT_BLOCK_WIDTH = 24.0
+PREFERRED_SINGLE_LINE_WIDTH_TOLERANCE = 1.2
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,8 @@ class DrawCommand:
     lines: tuple[str, ...] = ()
     font_size: float | None = None
     line_height: float | None = None
+    font_name: str | None = None
+    color: str | None = None
     overflow: bool = False
     fit_reason: str = "fit"
     image_ref: str | None = None
@@ -97,11 +103,11 @@ def build_render_plan(
                 if options.debug_boxes:
                     commands.extend(_debug_commands(block.id, block.bbox))
             elif isinstance(block, TableBlock):
-                commands.append(_table_placeholder_command(block))
+                commands.append(_table_command(block, options))
                 if options.debug_boxes:
                     commands.extend(_debug_commands(block.id, block.bbox))
             elif isinstance(block, FormulaBlock):
-                commands.append(_formula_placeholder_command(block))
+                commands.append(_formula_command(block, options))
                 if options.debug_boxes:
                     commands.extend(_debug_commands(block.id, block.bbox))
         pages.append(
@@ -150,11 +156,11 @@ def missing_translations_for_layout(config: LayoutConfig) -> list[str]:
 
 
 def _execute_command(pdf, command: DrawCommand) -> None:
-    from reportlab.lib.colors import black, blue, red
+    from reportlab.lib.colors import blue, red
 
     if command.kind == "text":
-        pdf.setFillColor(black)
-        pdf.setFont("STSong-Light", _font_size_for(command))
+        pdf.setFillColor(_text_color_for(command))
+        pdf.setFont(_reportlab_font_for(command), _font_size_for(command))
         _draw_text_in_box(pdf, command)
     elif command.kind == "image_asset":
         if command.image_path:
@@ -194,14 +200,90 @@ def _register_fonts() -> None:
         pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
 
 
+def _text_color_for(command: DrawCommand):
+    from reportlab.lib.colors import HexColor, black
+
+    if command.color:
+        try:
+            return HexColor(command.color)
+        except ValueError:
+            return black
+    return black
+
+
+def _reportlab_font_for(command: DrawCommand) -> str:
+    if _contains_cjk(command.text or ""):
+        return "STSong-Light"
+
+    name = (command.font_name or "").lower()
+    is_bold = any(token in name for token in ("bold", "medi", "bd", "black", "demi"))
+    is_italic = any(token in name for token in ("italic", "ital", "oblique", "slant"))
+
+    if any(token in name for token in ("courier", "mono", "typewriter")):
+        if is_bold and is_italic:
+            return "Courier-BoldOblique"
+        if is_bold:
+            return "Courier-Bold"
+        if is_italic:
+            return "Courier-Oblique"
+        return "Courier"
+
+    if any(token in name for token in ("times", "roman", "serif", "nimbusrom")):
+        if is_bold and is_italic:
+            return "Times-BoldItalic"
+        if is_bold:
+            return "Times-Bold"
+        if is_italic:
+            return "Times-Italic"
+        return "Times-Roman"
+
+    if is_bold and is_italic:
+        return "Helvetica-BoldOblique"
+    if is_bold:
+        return "Helvetica-Bold"
+    if is_italic:
+        return "Helvetica-Oblique"
+    return "Helvetica" if command.font_name else "STSong-Light"
+
+
+def _contains_cjk(text: str) -> bool:
+    return any("\u4e00" <= character <= "\u9fff" for character in text)
+
+
 def _font_size_for(command: DrawCommand) -> float:
     if command.font_size is not None:
         return command.font_size
     return _default_font_size_for_height(command.height)
 
 
+def _infer_initial_font_size(
+    text: str,
+    width: float,
+    height: float,
+    preferred_font_size: float | None,
+) -> float:
+    box_cap = height / LINE_HEIGHT_RATIO
+    if preferred_font_size is not None and preferred_font_size > 0:
+        seeded = float(preferred_font_size)
+        return max(MIN_TEXT_FONT_SIZE, min(MAX_SEED_FONT_SIZE, seeded))
+    glyph_cap = _soft_glyph_budget_pt(text)
+    return round(max(MIN_TEXT_FONT_SIZE, min(MAX_SEED_FONT_SIZE, glyph_cap, box_cap)), 2)
+
+
+def _soft_glyph_budget_pt(text: str) -> float:
+    """Rough upper bound from character count — avoids oversized type in tall, sparse boxes."""
+    n = len("".join(text.split()))
+    if n <= 0:
+        return DEFAULT_TEXT_FONT_SIZE
+    power = MIN_TEXT_FONT_SIZE + math.pow(float(n), 0.52) * 4.35
+    return float(min(MAX_SEED_FONT_SIZE, max(DEFAULT_TEXT_FONT_SIZE, power)))
+
+
 def _default_font_size_for_height(height: float) -> float:
-    return min(DEFAULT_TEXT_FONT_SIZE, max(MIN_TEXT_FONT_SIZE, height * 0.8))
+    return round(
+        max(MIN_TEXT_FONT_SIZE, min(MAX_SEED_FONT_SIZE, height / LINE_HEIGHT_RATIO)),
+        2,
+    )
 
 
 def _draw_text_in_box(pdf, command: DrawCommand) -> None:
@@ -237,7 +319,12 @@ def _wrap_text(text: str, width: float, font_size: float) -> list[str]:
 def _text_command(block: TextBlock, options: RenderOptions) -> DrawCommand:
     x, y, width, height = _rect_from_bbox(block.bbox)
     text, selection_reason = _text_for_block(block, options, width)
-    fit = fit_text_to_box(text, width, height)
+    fit = fit_text_to_box(
+        text,
+        width,
+        height,
+        preferred_font_size=block.style.font_size,
+    )
     return DrawCommand(
         kind="text",
         block_id=block.id,
@@ -249,6 +336,8 @@ def _text_command(block: TextBlock, options: RenderOptions) -> DrawCommand:
         lines=fit.lines,
         font_size=fit.font_size,
         line_height=fit.line_height,
+        font_name=block.style.font_name,
+        color=block.style.color,
         overflow=fit.overflow,
         fit_reason=selection_reason if selection_reason != "fit" else fit.fit_reason,
     )
@@ -327,20 +416,64 @@ def _placeholder_command(
 
 
 def _image_command(block: ImageBlock, options: RenderOptions) -> DrawCommand:
-    resolved_path = _resolve_asset_path(block.image.asset_path, options.asset_base_dir)
-    if resolved_path is not None:
-        x, y, width, height = _rect_from_bbox(block.bbox)
-        return DrawCommand(
-            kind="image_asset",
-            block_id=block.id,
-            x=x,
-            y=y,
-            width=width,
-            height=height,
-            image_ref=block.image.ref,
-            image_path=str(resolved_path),
-        )
+    command = _asset_draw_command(
+        block_id=block.id,
+        bbox=block.bbox,
+        asset_path=block.image.asset_path,
+        asset_base_dir=options.asset_base_dir,
+        image_ref=block.image.ref,
+    )
+    if command is not None:
+        return command
     return _image_placeholder_command(block)
+
+
+def _table_command(block: TableBlock, options: RenderOptions) -> DrawCommand:
+    command = _asset_draw_command(
+        block_id=block.id,
+        bbox=block.bbox,
+        asset_path=block.table.asset_path,
+        asset_base_dir=options.asset_base_dir,
+    )
+    if command is not None:
+        return command
+    return _table_placeholder_command(block)
+
+
+def _formula_command(block: FormulaBlock, options: RenderOptions) -> DrawCommand:
+    command = _asset_draw_command(
+        block_id=block.id,
+        bbox=block.bbox,
+        asset_path=block.formula.asset_path,
+        asset_base_dir=options.asset_base_dir,
+    )
+    if command is not None:
+        return command
+    return _formula_placeholder_command(block)
+
+
+def _asset_draw_command(
+    *,
+    block_id: str,
+    bbox: BBox,
+    asset_path: str | None,
+    asset_base_dir: Path | None,
+    image_ref: str | None = None,
+) -> DrawCommand | None:
+    resolved_path = _resolve_asset_path(asset_path, asset_base_dir)
+    if resolved_path is None:
+        return None
+    x, y, width, height = _rect_from_bbox(bbox)
+    return DrawCommand(
+        kind="image_asset",
+        block_id=block_id,
+        x=x,
+        y=y,
+        width=width,
+        height=height,
+        image_ref=image_ref,
+        image_path=str(resolved_path),
+    )
 
 
 def _resolve_asset_path(
@@ -411,12 +544,34 @@ def _rect_from_bbox(bbox: BBox) -> tuple[float, float, float, float]:
     return bbox.x0, bbox.y0, bbox.x1 - bbox.x0, bbox.y1 - bbox.y0
 
 
-def fit_text_to_box(text: str, width: float, height: float) -> TextFitResult:
-    font_size = DEFAULT_TEXT_FONT_SIZE
+def fit_text_to_box(
+    text: str,
+    width: float,
+    height: float,
+    preferred_font_size: float | None = None,
+) -> TextFitResult:
+    font_size = _infer_initial_font_size(text, width, height, preferred_font_size)
+    if (
+        preferred_font_size is not None
+        and "\n" not in text
+        and _estimate_text_width(text, font_size)
+        <= width * PREFERRED_SINGLE_LINE_WIDTH_TOLERANCE
+    ):
+        return TextFitResult(
+            lines=(text,),
+            font_size=font_size,
+            line_height=min(font_size * LINE_HEIGHT_RATIO, max(height, MIN_TEXT_FONT_SIZE)),
+        )
     last_lines: tuple[str, ...] = tuple(_wrap_text(text, width, font_size))
     while font_size >= MIN_TEXT_FONT_SIZE:
         line_height = font_size * LINE_HEIGHT_RATIO
         lines = tuple(_wrap_text(text, width, font_size))
+        if preferred_font_size is not None and len(lines) == 1:
+            return TextFitResult(
+                lines=lines,
+                font_size=font_size,
+                line_height=min(line_height, max(height, MIN_TEXT_FONT_SIZE)),
+            )
         if len(lines) * line_height <= height:
             return TextFitResult(
                 lines=lines,

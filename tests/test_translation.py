@@ -6,6 +6,7 @@ from pdftranslate.translation import (
     MissingProviderCredentials,
     MockTranslationProvider,
     OpenAICompatibleTranslationProvider,
+    TranslationError,
     TranslationItem,
     TranslationRequest,
     TranslationResult,
@@ -25,6 +26,26 @@ class RecordingProvider:
 
     def translate(self, request: TranslationRequest):
         self.requests.append(request)
+        return [
+            TranslationResult(
+                block_id=item.block_id,
+                translated_text=f"译文:{item.text}",
+            )
+            for item in request.items
+        ]
+
+
+class FlakyProvider:
+    name = "flaky"
+
+    def __init__(self, failures_before_success: int) -> None:
+        self.failures_before_success = failures_before_success
+        self.requests = []
+
+    def translate(self, request: TranslationRequest):
+        self.requests.append(request)
+        if len(self.requests) <= self.failures_before_success:
+            raise RuntimeError("HTTP Error 429: Too Many Requests")
         return [
             TranslationResult(
                 block_id=item.block_id,
@@ -208,6 +229,107 @@ def test_translate_layout_config_provider_receives_block_ids_and_original_text()
         ("p1_b1", "Original text"),
         ("p1_b2", "Second text"),
     ]
+
+
+def test_translate_layout_config_splits_translation_requests_by_item_count():
+    provider = RecordingProvider()
+    data = minimal_layout_dict()
+    base_block = data["pages"][0]["blocks"][0]
+    data["pages"][0]["blocks"] = [
+        {
+            **base_block,
+            "id": f"p1_b{index}",
+            "text": f"Text {index}",
+        }
+        for index in range(1, 6)
+    ]
+    config = layout_config_from_dict(data)
+
+    translated = translate_layout_config(
+        config,
+        provider,
+        max_items_per_request=2,
+    )
+
+    assert [
+        [item.block_id for item in request.items]
+        for request in provider.requests
+    ] == [
+        ["p1_b1", "p1_b2"],
+        ["p1_b3", "p1_b4"],
+        ["p1_b5"],
+    ]
+    assert translated.pages[0].blocks[4].translated_text == "译文:Text 5"
+
+
+def test_translate_layout_config_reports_completed_batches():
+    provider = RecordingProvider()
+    data = minimal_layout_dict()
+    base_block = data["pages"][0]["blocks"][0]
+    data["pages"][0]["blocks"] = [
+        {
+            **base_block,
+            "id": f"p1_b{index}",
+            "text": f"Text {index}",
+        }
+        for index in range(1, 4)
+    ]
+    config = layout_config_from_dict(data)
+    progress = []
+
+    translate_layout_config(
+        config,
+        provider,
+        max_items_per_request=2,
+        on_batch_complete=lambda batch_index, total_batches, item_count: progress.append(
+            (batch_index, total_batches, item_count)
+        ),
+    )
+
+    assert progress == [(1, 2, 2), (2, 2, 1)]
+
+
+def test_translate_layout_config_retries_failed_translation_batches():
+    provider = FlakyProvider(failures_before_success=2)
+    config = layout_config_from_dict(minimal_layout_dict())
+    sleeps = []
+    retries = []
+
+    translated = translate_layout_config(
+        config,
+        provider,
+        max_retries=2,
+        retry_delay_seconds=0.5,
+        sleep=sleeps.append,
+        on_batch_retry=lambda batch_index, total_batches, attempt, error, delay: retries.append(
+            (batch_index, total_batches, attempt, str(error), delay)
+        ),
+    )
+
+    assert len(provider.requests) == 3
+    assert sleeps == [0.5, 1.0]
+    assert retries == [
+        (1, 1, 1, "HTTP Error 429: Too Many Requests", 0.5),
+        (1, 1, 2, "HTTP Error 429: Too Many Requests", 1.0),
+    ]
+    assert translated.pages[0].blocks[0].translated_text == "译文:Original text"
+
+
+def test_translate_layout_config_raises_translation_error_after_retry_exhaustion():
+    provider = FlakyProvider(failures_before_success=3)
+    config = layout_config_from_dict(minimal_layout_dict())
+
+    with pytest.raises(TranslationError) as error:
+        translate_layout_config(
+            config,
+            provider,
+            max_retries=1,
+            retry_delay_seconds=0,
+            sleep=lambda delay: None,
+        )
+
+    assert "translation batch 1/1 failed after 2 attempts" in str(error.value)
+    assert "Too Many Requests" in str(error.value)
 
 
 def test_translate_layout_config_keeps_original_text_and_writes_translation():

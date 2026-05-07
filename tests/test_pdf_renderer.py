@@ -5,11 +5,13 @@ from pdftranslate.pdf_renderer import (
     DEFAULT_TEXT_FONT_SIZE,
     DrawCommand,
     MIN_TEXT_FONT_SIZE,
+    MAX_SEED_FONT_SIZE,
     RenderOptions,
     build_render_plan,
     render_layout_pdf,
     missing_translations_for_layout,
     _draw_text_in_box,
+    _execute_command,
 )
 from tests.fixtures import layout_dict_with_all_block_kinds, minimal_layout_dict
 
@@ -23,9 +25,17 @@ _ONE_PIXEL_PNG = (
 class _FakePdf:
     def __init__(self):
         self.drawn_strings = []
+        self.font_calls = []
+        self.fill_colors = []
 
     def drawString(self, x, y, text):
         self.drawn_strings.append((x, y, text))
+
+    def setFont(self, font_name, font_size):
+        self.font_calls.append((font_name, font_size))
+
+    def setFillColor(self, color):
+        self.fill_colors.append(color)
 
 
 def _only_text_command(config, options=None):
@@ -109,7 +119,7 @@ def test_translated_text_reduces_font_size_when_bbox_height_is_short():
     assert command.font_size < DEFAULT_TEXT_FONT_SIZE
 
 
-def test_fitting_translated_text_keeps_default_font_size_without_overflow():
+def test_fitting_translated_text_relaxes_above_default_when_bbox_is_spacious():
     data = minimal_layout_dict()
     data["pages"][0]["blocks"][0]["bbox"]["x1"] = 260.0
     data["pages"][0]["blocks"][0]["bbox"]["y1"] = 180.0
@@ -118,8 +128,72 @@ def test_fitting_translated_text_keeps_default_font_size_without_overflow():
 
     command = _only_text_command(config)
 
-    assert command.font_size == DEFAULT_TEXT_FONT_SIZE
     assert command.overflow is False
+    assert MIN_TEXT_FONT_SIZE <= command.font_size <= MAX_SEED_FONT_SIZE
+    assert command.font_size >= DEFAULT_TEXT_FONT_SIZE
+
+
+def test_heading_scale_short_text_bbox_gains_larger_than_default_font():
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["text"] = "Attention Is All You Need"
+    data["pages"][0]["blocks"][0]["bbox"] = {
+        "x0": 72.0,
+        "y0": 600.0,
+        "x1": 540.0,
+        "y1": 630.0,
+    }
+    config = layout_config_from_dict(data)
+
+    command = _only_text_command(config)
+
+    assert command.font_size >= DEFAULT_TEXT_FONT_SIZE + 2.5
+
+
+def test_text_style_font_size_color_and_font_are_carried_to_draw_command():
+    data = minimal_layout_dict()
+    data["pages"][0]["blocks"][0]["text"] = "Attention Is All You Need"
+    data["pages"][0]["blocks"][0]["bbox"] = {
+        "x0": 210.61,
+        "y0": 626.36,
+        "x1": 399.89,
+        "y1": 642.75,
+    }
+    data["pages"][0]["blocks"][0]["style"] = {
+        "font_name": "NimbusRomNo9L-Medi",
+        "font_size": 17.2154,
+        "color": "#808080",
+        "rotation": 0,
+    }
+    config = layout_config_from_dict(data)
+
+    command = _only_text_command(config)
+
+    assert command.font_size == 17.2154
+    assert command.font_name == "NimbusRomNo9L-Medi"
+    assert command.color == "#808080"
+
+
+def test_execute_text_command_uses_mapped_font_and_style_color():
+    pdf = _FakePdf()
+    command = DrawCommand(
+        kind="text",
+        block_id="p1_b1",
+        x=10.0,
+        y=20.0,
+        width=200.0,
+        height=30.0,
+        text="Styled text",
+        lines=("Styled text",),
+        font_size=12.5,
+        line_height=14.0,
+        font_name="NimbusRomNo9L-Medi",
+        color="#808080",
+    )
+
+    _execute_command(pdf, command)
+
+    assert pdf.font_calls[0] == ("Times-Bold", 12.5)
+    assert pdf.fill_colors
 
 
 def test_tiny_bbox_never_uses_font_size_below_minimum():
@@ -394,6 +468,25 @@ def test_table_block_bbox_maps_to_table_placeholder_command():
     assert command.height == 220.0
 
 
+def test_table_asset_path_maps_to_real_image_draw_command(tmp_path):
+    image_path = tmp_path / "p1_t1.png"
+    image_path.write_bytes(base64.b64decode(_ONE_PIXEL_PNG))
+    data = layout_dict_with_all_block_kinds()
+    data["pages"][0]["blocks"][2]["table"]["asset_path"] = str(image_path)
+    config = layout_config_from_dict(data)
+
+    plan = build_render_plan(config)
+
+    image_commands = [
+        command
+        for page in plan.pages
+        for command in page.commands
+        if command.kind == "image_asset" and command.block_id == "p1_t1"
+    ]
+    assert len(image_commands) == 1
+    assert image_commands[0].image_path == str(image_path)
+
+
 def test_formula_block_bbox_maps_to_formula_placeholder_command():
     config = layout_config_from_dict(layout_dict_with_all_block_kinds())
 
@@ -412,6 +505,25 @@ def test_formula_block_bbox_maps_to_formula_placeholder_command():
     assert command.y == 420.0
     assert command.width == 252.0
     assert command.height == 36.0
+
+
+def test_formula_asset_path_maps_to_real_image_draw_command(tmp_path):
+    image_path = tmp_path / "p1_f1.png"
+    image_path.write_bytes(base64.b64decode(_ONE_PIXEL_PNG))
+    data = layout_dict_with_all_block_kinds()
+    data["pages"][0]["blocks"][3]["formula"]["asset_path"] = str(image_path)
+    config = layout_config_from_dict(data)
+
+    plan = build_render_plan(config)
+
+    image_commands = [
+        command
+        for page in plan.pages
+        for command in page.commands
+        if command.kind == "image_asset" and command.block_id == "p1_f1"
+    ]
+    assert len(image_commands) == 1
+    assert image_commands[0].image_path == str(image_path)
 
 
 def test_debug_boxes_generate_box_and_label_for_all_block_kinds():
@@ -527,6 +639,23 @@ def test_render_layout_pdf_writes_table_placeholder_id(tmp_path):
     assert "p1_t1" in page_text
 
 
+def test_render_layout_pdf_writes_table_image_resource_for_asset_path(tmp_path):
+    from pypdf import PdfReader
+
+    image_path = tmp_path / "p1_t1.png"
+    image_path.write_bytes(base64.b64decode(_ONE_PIXEL_PNG))
+    data = layout_dict_with_all_block_kinds()
+    data["pages"][0]["blocks"][2]["table"]["asset_path"] = str(image_path)
+    config = layout_config_from_dict(data)
+    output_path = tmp_path / "rebuilt-table-image.pdf"
+
+    render_layout_pdf(config, output_path)
+
+    resources = PdfReader(output_path).pages[0].get("/Resources")
+    assert resources is not None
+    assert "/XObject" in resources
+
+
 def test_render_layout_pdf_writes_formula_placeholder_id(tmp_path):
     from pypdf import PdfReader
 
@@ -537,3 +666,20 @@ def test_render_layout_pdf_writes_formula_placeholder_id(tmp_path):
 
     page_text = PdfReader(output_path).pages[0].extract_text()
     assert "p1_f1" in page_text
+
+
+def test_render_layout_pdf_writes_formula_image_resource_for_asset_path(tmp_path):
+    from pypdf import PdfReader
+
+    image_path = tmp_path / "p1_f1.png"
+    image_path.write_bytes(base64.b64decode(_ONE_PIXEL_PNG))
+    data = layout_dict_with_all_block_kinds()
+    data["pages"][0]["blocks"][3]["formula"]["asset_path"] = str(image_path)
+    config = layout_config_from_dict(data)
+    output_path = tmp_path / "rebuilt-formula-image.pdf"
+
+    render_layout_pdf(config, output_path)
+
+    resources = PdfReader(output_path).pages[0].get("/Resources")
+    assert resources is not None
+    assert "/XObject" in resources

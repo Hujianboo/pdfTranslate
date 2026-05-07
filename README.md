@@ -5,8 +5,8 @@
 ## 当前能力
 
 - `extract`：用 PDFium 提取 PDF 文本并输出 Markdown。
-- `parse-layout`：用 Docling 解析 PDF 版面，并输出 JSON 格式的 `LayoutConfig`；当 Docling 检出表格或公式时，会输出 `table` / `formula` block。
-- `extract-images`：从原 PDF 提取可用图片资产，并把 `image.asset_path` 写回增强版 `LayoutConfig`。
+- `parse-layout`：用 Docling 解析 PDF 文件或目录，并输出 JSON 格式的 `LayoutConfig`；当 Docling 检出表格或公式时，会输出 `table` / `formula` block，默认也会按版面区域生成图片资产。
+- `extract-images`：按已有 `LayoutConfig` 中的图片/表格/公式区域从原 PDF rasterize 图片资产，并把 `asset_path` 写回增强版 `LayoutConfig`。
 - `translate-layout`：读取 `LayoutConfig`，只翻译可翻译文本块，默认输出中文译文到 `translated_text`。
 - `render-layout`：用 `LayoutConfig` 重建 PDF；文本块有 `translated_text` 时会优先绘制译文，并进行 bbox 内换行、字号收缩和 overflow 标记；图片块有有效 `asset_path` 时会回填真实图片，否则保留占位框；表格和公式当前以可调试占位框渲染。
 - 默认不处理扫描版 PDF，也不会开启 OCR。
@@ -28,38 +28,40 @@ uv sync
 
 当前可以先跳过真实翻译接口，用两条高层命令跑通“解析 -> 手动翻译 -> 重建 PDF”：
 
+默认临时产物会放在 `tmp/layout`、`tmp/assets` 和 `tmp/pdf` 下；如果需要，也可以通过命令行参数改掉。
+
 ```bash
-uv run pdftranslate prepare-layout assets \
-  --output-dir output/layout \
-  --assets-dir output/assets
+uv run pdftranslate parse-layout assets \
+  --output tmp/layout \
+  --assets-dir tmp/assets
 ```
 
 如果传入的是目录，命令会处理目录下的 `*.pdf`；如果传入的是单个 PDF，则只处理该文件。输出文件名为：
 
 ```text
-output/layout/<pdf-name>.layout.json
+tmp/layout/<pdf-name>.layout.json
 ```
 
-同时会提取可匹配的图片资产，并把 `image.asset_path` 写成相对 layout 文件所在目录的路径，后续换目录执行也更稳。
+同时会按图片/表格/公式区域生成 PNG 资产，并把 `asset_path` 写成相对 layout 文件所在目录的路径，后续换目录执行也更稳。
 
 你可以把完成中文译文的 layout 命名为：
 
 ```text
-output/layout/<pdf-name>.zh.layout.json
+tmp/layout/<pdf-name>.zh.layout.json
 ```
 
 然后生成最终 PDF：
 
 ```bash
-uv run pdftranslate build-pdf output/layout/<pdf-name>.zh.layout.json \
-  --output-dir output/pdf
+uv run pdftranslate build-pdf tmp/layout/<pdf-name>.zh.layout.json \
+  --output-dir tmp/pdf
 ```
 
 默认情况下，`build-pdf` 会要求所有 `translatable=true` 的 text block 都有非空 `translated_text`。如果只是调试半成品 layout，可以加：
 
 ```bash
-uv run pdftranslate build-pdf output/layout/<pdf-name>.zh.layout.json \
-  --output-dir output/pdf \
+uv run pdftranslate build-pdf tmp/layout/<pdf-name>.zh.layout.json \
+  --output-dir tmp/pdf \
   --allow-missing-translations \
   --debug-boxes
 ```
@@ -204,7 +206,7 @@ openspec/specs/pdf-layout-config/spec.md
 
 ### 3. 提取图片资产并写回 LayoutConfig
 
-`parse-layout` 只负责发现图片块的位置。要让重建 PDF 回填真实图片，需要再运行图片资产提取：
+`parse-layout` 默认已经会生成图片资产。只有在你已有 layout JSON，想单独重新生成或写回 assets 时，才需要运行图片资产提取：
 
 ```bash
 uv run pdftranslate extract-images assets/1603.08767v1.pdf \
@@ -215,12 +217,12 @@ uv run pdftranslate extract-images assets/1603.08767v1.pdf \
 
 这个命令会：
 
-- 从原 PDF 中提取可用的嵌入图片。
+- 按 layout 中的图片/表格/公式 bbox 从原 PDF rasterize PNG 资产。
 - 保存到 `--assets-dir` 指定的目录。
-- 尽量按页面和 bbox 与现有 image block 匹配。
-- 在增强版 layout JSON 中写入相对 `--output-layout` 所在目录的 `image.asset_path`。
+- 按 block id 写回对应的 `image.asset_path`、`table.asset_path` 或 `formula.asset_path`。
+- 在增强版 layout JSON 中写入相对 `--output-layout` 所在目录的资产路径。
 
-如果某个图片块没有匹配到可提取图片，会保留原有 `ref`、尺寸和 `mime_type`，后续渲染时仍显示占位框。
+如果某个区域无法 rasterize，会保留原有 `ref`、尺寸和 `mime_type`，后续渲染时仍显示占位框。
 
 ### 4. 翻译 LayoutConfig 文本块
 

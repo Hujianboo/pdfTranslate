@@ -7,11 +7,19 @@ from pathlib import Path
 from typing import Any
 
 from pdftranslate.layout import BBox
-from pdftranslate.layout import ImageBlock, ImageInfo, LayoutConfig, PageLayout
+from pdftranslate.layout import (
+    FormulaBlock,
+    FormulaInfo,
+    ImageBlock,
+    ImageInfo,
+    LayoutConfig,
+    PageLayout,
+    TableBlock,
+    TableInfo,
+)
 
 
-MIN_IMAGE_MATCH_IOU = 0.01
-MAX_IMAGE_MATCH_CENTER_DISTANCE = 24.0
+IMAGE_RASTER_SCALE = 2.0
 
 
 @dataclass(frozen=True)
@@ -24,99 +32,108 @@ class ExtractedImageAsset:
     source_id: str | None = None
 
 
-def bbox_from_top_left_rect(rect: Any, page_height: float) -> BBox:
-    return BBox(
-        x0=float(rect.x0),
-        y0=page_height - float(rect.y1),
-        x1=float(rect.x1),
-        y1=page_height - float(rect.y0),
-    )
-
-
 def extract_pdf_image_assets(
     pdf_path: str | Path,
     assets_dir: str | Path,
     layout_config: LayoutConfig,
     base_dir: str | Path | None = None,
 ) -> LayoutConfig:
-    assets = extract_images_from_pdf(pdf_path)
     output_dir = Path(assets_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    matches = match_image_assets_to_blocks(layout_config, assets)
-    blocks_by_id = {block.id: block for block in _iter_image_blocks(layout_config)}
-    for block_id, asset in matches.items():
+    block_assets = rasterize_image_blocks(pdf_path, layout_config)
+    block_assets.update(rasterize_table_and_formula_blocks(pdf_path, layout_config))
+
+    blocks_by_id = {
+        block.id: block for block in _iter_asset_blocks(layout_config)
+    }
+    for block_id, asset in block_assets.items():
         block = blocks_by_id[block_id]
         output_path = output_dir / asset_filename_for_block(block, asset)
         output_path.write_bytes(asset.data)
 
     return attach_image_assets_to_layout(
         layout_config,
-        assets,
         assets_dir=output_dir,
         base_dir=base_dir,
+        matches=block_assets,
     )
 
 
-def extract_images_from_pdf(pdf_path: str | Path) -> list[ExtractedImageAsset]:
-    import fitz
-
-    assets: list[ExtractedImageAsset] = []
-    with fitz.open(pdf_path) as document:
-        for page_index, page in enumerate(document, start=1):
-            page_height = float(page.rect.height)
-            for image_tuple in page.get_images(full=True):
-                xref = int(image_tuple[0])
-                image_data = document.extract_image(xref)
-                data = image_data.get("image")
-                if not data:
-                    continue
-
-                extension = str(image_data.get("ext") or "png").lower()
-                for rect in page.get_image_rects(xref):
-                    assets.append(
-                        ExtractedImageAsset(
-                            page_number=page_index,
-                            bbox=bbox_from_top_left_rect(rect, page_height),
-                            data=bytes(data),
-                            extension=extension,
-                            mime_type=_mime_type_for_extension(extension),
-                            source_id=str(xref),
-                        )
-                    )
-    return assets
-
-
-def match_image_assets_to_blocks(
+def rasterize_image_blocks(
+    pdf_path: str | Path,
     config: LayoutConfig,
-    assets: list[ExtractedImageAsset],
 ) -> dict[str, ExtractedImageAsset]:
-    matches: dict[str, ExtractedImageAsset] = {}
-    used_asset_indexes: set[int] = set()
+    import pypdfium2 as pdfium  # type: ignore[import-not-found]
 
+    rasterized: dict[str, ExtractedImageAsset] = {}
+
+    page_sizes = {page.page_number: page.height for page in config.pages}
+    blocks_by_page: dict[int, list[ImageBlock]] = {}
     for block in _iter_image_blocks(config):
-        best_index: int | None = None
-        best_score: float | None = None
-        for index, asset in enumerate(assets):
-            if index in used_asset_indexes or asset.page_number != block.page_number:
-                continue
+        blocks_by_page.setdefault(block.page_number, []).append(block)
 
-            score = _match_score(block.bbox, asset.bbox)
-            if best_score is None or score < best_score:
-                best_score = score
-                best_index = index
+    if not blocks_by_page:
+        return rasterized
 
-        if best_index is not None and _is_acceptable_match(
-            block.bbox,
-            assets[best_index].bbox,
-        ):
-            used_asset_indexes.add(best_index)
-            matches[block.id] = assets[best_index]
+    document = pdfium.PdfDocument(str(pdf_path))
+    try:
+        for page_number, blocks in blocks_by_page.items():
+            page = document[page_number - 1]
+            try:
+                page_height = page_sizes.get(page_number, float(page.get_height()))
+                for block in blocks:
+                    asset = rasterize_image_block(page, block, page_height=page_height)
+                    if asset is not None:
+                        rasterized[block.id] = asset
+            finally:
+                page.close()
+    finally:
+        document.close()
+    return rasterized
 
-    return matches
+
+def rasterize_table_and_formula_blocks(
+    pdf_path: str | Path,
+    config: LayoutConfig,
+) -> dict[str, ExtractedImageAsset]:
+    import pypdfium2 as pdfium  # type: ignore[import-not-found]
+
+    rasterized: dict[str, ExtractedImageAsset] = {}
+    page_sizes = {page.page_number: page.height for page in config.pages}
+    blocks_by_page: dict[int, list[TableBlock | FormulaBlock]] = {}
+    for block in _iter_table_formula_blocks(config):
+        blocks_by_page.setdefault(block.page_number, []).append(block)
+
+    if not blocks_by_page:
+        return rasterized
+
+    document = pdfium.PdfDocument(str(pdf_path))
+    try:
+        for page_number, blocks in blocks_by_page.items():
+            page = document[page_number - 1]
+            try:
+                page_height = page_sizes.get(page_number, float(page.get_height()))
+                for block in blocks:
+                    asset = rasterize_block_bbox(
+                        page,
+                        block,
+                        page_height=page_height,
+                        source_prefix=block.kind,
+                    )
+                    if asset is not None:
+                        rasterized[block.id] = asset
+            finally:
+                page.close()
+    finally:
+        document.close()
+    return rasterized
 
 
-def asset_filename_for_block(block: ImageBlock, asset: ExtractedImageAsset) -> str:
+def asset_filename_for_block(
+    block: ImageBlock | TableBlock | FormulaBlock,
+    asset: ExtractedImageAsset,
+) -> str:
     extension = asset.extension.lower().lstrip(".") or "png"
     return f"{block.id}.{extension}"
 
@@ -128,24 +145,46 @@ def relative_asset_path(path: str | Path, base_dir: str | Path | None = None) ->
 
 def attach_image_assets_to_layout(
     config: LayoutConfig,
-    assets: list[ExtractedImageAsset],
     assets_dir: str | Path,
     base_dir: str | Path | None = None,
+    matches: dict[str, ExtractedImageAsset] | None = None,
 ) -> LayoutConfig:
-    matches = match_image_assets_to_blocks(config, assets)
+    resolved_matches = matches or {}
     pages = []
     for page in config.pages:
         blocks = []
         for block in page.blocks:
-            if isinstance(block, ImageBlock) and block.id in matches:
-                blocks.append(
-                    _image_block_with_asset(
-                        block,
-                        matches[block.id],
-                        assets_dir=Path(assets_dir),
-                        base_dir=base_dir,
+            if block.id in resolved_matches:
+                asset = resolved_matches[block.id]
+                if isinstance(block, ImageBlock):
+                    blocks.append(
+                        _image_block_with_asset(
+                            block,
+                            asset,
+                            assets_dir=Path(assets_dir),
+                            base_dir=base_dir,
+                        )
                     )
-                )
+                elif isinstance(block, TableBlock):
+                    blocks.append(
+                        _table_block_with_asset(
+                            block,
+                            asset,
+                            assets_dir=Path(assets_dir),
+                            base_dir=base_dir,
+                        )
+                    )
+                elif isinstance(block, FormulaBlock):
+                    blocks.append(
+                        _formula_block_with_asset(
+                            block,
+                            asset,
+                            assets_dir=Path(assets_dir),
+                            base_dir=base_dir,
+                        )
+                    )
+                else:
+                    blocks.append(block)
             else:
                 blocks.append(block)
         pages.append(_page_with_blocks(page, blocks))
@@ -167,6 +206,26 @@ def _iter_image_blocks(config: LayoutConfig) -> list[ImageBlock]:
     ]
 
 
+def _iter_table_formula_blocks(config: LayoutConfig) -> list[TableBlock | FormulaBlock]:
+    return [
+        block
+        for page in config.pages
+        for block in page.blocks
+        if isinstance(block, (TableBlock, FormulaBlock))
+    ]
+
+
+def _iter_asset_blocks(
+    config: LayoutConfig,
+) -> list[ImageBlock | TableBlock | FormulaBlock]:
+    return [
+        block
+        for page in config.pages
+        for block in page.blocks
+        if isinstance(block, (ImageBlock, TableBlock, FormulaBlock))
+    ]
+
+
 def _image_block_with_asset(
     block: ImageBlock,
     asset: ExtractedImageAsset,
@@ -184,6 +243,42 @@ def _image_block_with_asset(
     return replace(block, image=image)
 
 
+def _table_block_with_asset(
+    block: TableBlock,
+    asset: ExtractedImageAsset,
+    assets_dir: Path,
+    base_dir: str | Path | None,
+) -> TableBlock:
+    asset_path = assets_dir / asset_filename_for_block(block, asset)
+    table = TableInfo(
+        num_rows=block.table.num_rows,
+        num_cols=block.table.num_cols,
+        cells=list(block.table.cells),
+        ref=block.table.ref,
+        caption=block.table.caption,
+        mime_type=asset.mime_type or block.table.mime_type,
+        asset_path=relative_asset_path(asset_path, base_dir=base_dir),
+    )
+    return replace(block, table=table)
+
+
+def _formula_block_with_asset(
+    block: FormulaBlock,
+    asset: ExtractedImageAsset,
+    assets_dir: Path,
+    base_dir: str | Path | None,
+) -> FormulaBlock:
+    asset_path = assets_dir / asset_filename_for_block(block, asset)
+    formula = FormulaInfo(
+        text=block.formula.text,
+        ref=block.formula.ref,
+        formula_type=block.formula.formula_type,
+        mime_type=asset.mime_type or block.formula.mime_type,
+        asset_path=relative_asset_path(asset_path, base_dir=base_dir),
+    )
+    return replace(block, formula=formula)
+
+
 def _page_with_blocks(page: PageLayout, blocks: list[object]) -> PageLayout:
     return PageLayout(
         page_number=page.page_number,
@@ -195,43 +290,64 @@ def _page_with_blocks(page: PageLayout, blocks: list[object]) -> PageLayout:
     )
 
 
-def _match_score(left: BBox, right: BBox) -> float:
-    iou = _bbox_iou(left, right)
-    return (1.0 - iou) + (_center_distance(left, right) / 10000.0)
-
-
-def _is_acceptable_match(left: BBox, right: BBox) -> bool:
-    return (
-        _bbox_iou(left, right) >= MIN_IMAGE_MATCH_IOU
-        or _center_distance(left, right) <= MAX_IMAGE_MATCH_CENTER_DISTANCE
-    )
-
-
-def _bbox_iou(left: BBox, right: BBox) -> float:
-    x0 = max(left.x0, right.x0)
-    y0 = max(left.y0, right.y0)
-    x1 = min(left.x1, right.x1)
-    y1 = min(left.y1, right.y1)
-    intersection = max(x1 - x0, 0.0) * max(y1 - y0, 0.0)
-    if intersection == 0:
-        return 0.0
-
-    left_area = max(left.x1 - left.x0, 0.0) * max(left.y1 - left.y0, 0.0)
-    right_area = max(right.x1 - right.x0, 0.0) * max(right.y1 - right.y0, 0.0)
-    union = left_area + right_area - intersection
-    return intersection / union if union else 0.0
-
-
-def _center_distance(left: BBox, right: BBox) -> float:
-    left_x = (left.x0 + left.x1) / 2
-    left_y = (left.y0 + left.y1) / 2
-    right_x = (right.x0 + right.x1) / 2
-    right_y = (right.y0 + right.y1) / 2
-    return ((left_x - right_x) ** 2 + (left_y - right_y) ** 2) ** 0.5
-
-
 def _mime_type_for_extension(extension: str) -> str:
     normalized = extension.lower().lstrip(".")
     if normalized == "jpg":
         normalized = "jpeg"
     return f"image/{normalized or 'png'}"
+
+
+def rasterize_image_block(
+    page: Any,
+    block: ImageBlock,
+    *,
+    page_height: float,
+) -> ExtractedImageAsset | None:
+    return rasterize_block_bbox(
+        page,
+        block,
+        page_height=page_height,
+        source_prefix="raster",
+    )
+
+
+def rasterize_block_bbox(
+    page: Any,
+    block: ImageBlock | TableBlock | FormulaBlock,
+    *,
+    page_height: float,
+    source_prefix: str,
+) -> ExtractedImageAsset | None:
+    from io import BytesIO
+
+    page_width = float(page.get_width())
+    crop = (
+        float(block.bbox.x0),
+        float(block.bbox.y0),
+        max(0.0, page_width - float(block.bbox.x1)),
+        max(0.0, page_height - float(block.bbox.y1)),
+    )
+    width = float(block.bbox.x1 - block.bbox.x0)
+    height = float(block.bbox.y1 - block.bbox.y0)
+    if width <= 0 or height <= 0:
+        return None
+
+    bitmap = page.render(scale=IMAGE_RASTER_SCALE, crop=crop)
+    try:
+        image = bitmap.to_pil()
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        data = buffer.getvalue()
+        if not data:
+            return None
+    finally:
+        bitmap.close()
+
+    return ExtractedImageAsset(
+        page_number=block.page_number,
+        bbox=block.bbox,
+        data=data,
+        extension="png",
+        mime_type="image/png",
+        source_id=f"{source_prefix}:{block.id}",
+    )
