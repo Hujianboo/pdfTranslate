@@ -37,19 +37,19 @@ codex login
 直接对 Codex 说：
 
 ```text
-用 pdfTranslate Codex 翻译 ./paper.pdf，输出到 ./translated/pdf。
+用 pdfTranslate Codex 翻译当前目录下的 PDF，输出到当前目录。
 ```
 
 或者：
 
 ```text
-Use pdfTranslate Codex to translate ./paper.pdf to Chinese and write the PDF to ./translated/pdf.
+Use pdfTranslate Codex to translate the PDF in the current directory and save the translated PDF in the current directory.
 ```
 
 如果需要保留中间文件：
 
 ```text
-用 pdfTranslate Codex 翻译 ./paper.pdf，输出到 ./translated/pdf，并保留中间文件。
+用 pdfTranslate Codex 翻译当前目录下的 PDF，输出到当前目录，并保留中间文件。
 ```
 
 ## **命令行使用**
@@ -57,7 +57,7 @@ Use pdfTranslate Codex to translate ./paper.pdf to Chinese and write the PDF to 
 ```bash
 uv run python plugins/pdftranslate-codex/scripts/translate_pdf_with_codex.py \
   ./paper.pdf \
-  --output-dir ./translated/pdf \
+  --output-dir . \
   --target-language zh
 ```
 

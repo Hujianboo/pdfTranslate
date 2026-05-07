@@ -5,7 +5,7 @@ REPO_URL="${PDFTRANSLATE_REPO_URL:-https://github.com/Hujianboo/pdfTranslate.git
 INSTALL_DIR="${PDFTRANSLATE_INSTALL_DIR:-$HOME/pdfTranslate}"
 
 info() {
-  printf '\033[1;34m==>\033[0m %s\n' "$1"
+  printf '\033[1;34m==>\033[0m %s\n' "$1" >&2
 }
 
 warn() {
@@ -49,10 +49,10 @@ resolve_repo_root() {
   has_command git || fail "git is required to clone pdfTranslate"
   if [[ -d "$INSTALL_DIR/.git" ]]; then
     info "Using existing repository: $INSTALL_DIR"
-    git -C "$INSTALL_DIR" pull --ff-only || warn "git pull failed; continuing with existing checkout"
+    git -C "$INSTALL_DIR" pull --ff-only >&2 || warn "git pull failed; continuing with existing checkout"
   else
     info "Cloning pdfTranslate into $INSTALL_DIR"
-    git clone "$REPO_URL" "$INSTALL_DIR"
+    git clone "$REPO_URL" "$INSTALL_DIR" >&2
   fi
   printf '%s\n' "$INSTALL_DIR"
 }
