@@ -29,8 +29,17 @@ assets/*.layout.json
 assets/*.md
 output/
 tmp/
+translated/
+translation-output/
+codex-translation/
+/1603codex/
 layout.json
 *.layout.json
+*.layout.zh.json
+*.translated.layout.json
+*.with-images.layout.json
+*.zh.pdf
+/*Zh.pdf
 
 # Local editor and OS files
 .DS_Store

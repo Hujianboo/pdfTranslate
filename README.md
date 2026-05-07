@@ -18,10 +18,16 @@
 
 ## 安装依赖
 
-项目使用 `uv` 管理依赖：
+推荐直接运行安装脚本。脚本会自动检查并安装/复用 `uv`，同步 Python 依赖，并把本仓库添加到 Codex plugin marketplace：
 
 ```bash
-uv sync
+bash scripts/install.sh
+```
+
+如果还没有 clone 仓库，也可以一条命令安装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hujianbo/pdfTranslate/main/scripts/install.sh | bash
 ```
 
 如果是第一次运行 Docling，它可能会下载模型文件，首轮解析会慢一些。
@@ -35,14 +41,8 @@ uv sync
 先安装依赖并确认 Codex CLI 已登录：
 
 ```bash
-uv sync
+bash scripts/install.sh
 codex login
-```
-
-然后在仓库根目录添加本地 marketplace：
-
-```bash
-codex plugin marketplace add .
 ```
 
 重新打开 Codex workspace 后，启用 `pdfTranslate Codex`。之后可以直接对 Codex 说：
@@ -57,23 +57,19 @@ Use pdfTranslate Codex to translate ./assets/1603.08767v1.pdf to Chinese and wri
 
 #### 给别人从 GitHub 安装
 
-发布到 GitHub 后，用户可以把这个仓库添加为 Codex plugin marketplace：
+发布到 GitHub 后，推荐用户直接运行安装脚本：
 
 ```bash
-codex plugin marketplace add hujianbo/pdfTranslate
+curl -fsSL https://raw.githubusercontent.com/hujianbo/pdfTranslate/main/scripts/install.sh | bash
 ```
 
-也可以用完整 Git URL：
+如果已经 clone 了仓库，则在仓库根目录运行：
 
 ```bash
-codex plugin marketplace add https://github.com/hujianbo/pdfTranslate.git
+bash scripts/install.sh
 ```
 
-如果你发布了 tag，建议让用户固定版本：
-
-```bash
-codex plugin marketplace add hujianbo/pdfTranslate --ref v0.1.0
-```
+安装完成后，重新打开 Codex workspace，并启用 `pdfTranslate Codex`。
 
 #### 命令行一键翻译
 

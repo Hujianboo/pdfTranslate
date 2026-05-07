@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import redirect_stderr, redirect_stdout
 import json
 from pathlib import Path
 import shutil
@@ -10,6 +11,8 @@ import sys
 import tempfile
 from typing import Any
 
+from pdftranslate.layout_io import load_layout_config
+from pdftranslate.pdf_renderer import RenderOptions, render_layout_pdf
 from pdftranslate.translation import (
     DEFAULT_MAX_CHARS_PER_TRANSLATION_REQUEST,
     DEFAULT_MAX_ITEMS_PER_TRANSLATION_REQUEST,
@@ -139,7 +142,13 @@ def translate_pdf(args: argparse.Namespace) -> None:
         )
         _validate_responses(batch_dir / "manifest.json", batch_dir)
         _apply_responses(batch_dir / "manifest.json", translated_layout, log_dir)
-        _build_pdf(translated_layout, output_pdf, args.debug_boxes, log_dir)
+        _build_pdf(
+            translated_layout,
+            output_pdf,
+            args.debug_boxes,
+            asset_base_dir=layout_dir,
+            log_dir=log_dir,
+        )
 
         print(f"wrote pdf: {output_pdf}")
         if args.output_layout:
@@ -166,20 +175,23 @@ def _parse_layout(
     no_images: bool,
     log_dir: Path,
 ) -> None:
-    command = [
-        "uv",
-        "run",
-        "pdftranslate",
-        "parse-layout",
-        str(input_pdf),
-        "--output",
-        str(layout_dir),
-        "--assets-dir",
-        str(assets_dir),
-    ]
-    if no_images:
-        command.append("--no-images")
-    _run(command, log_dir / "parse-layout.log")
+    from pdftranslate.docling_adapter import parse_pdf_layout
+
+    log_path = log_dir / "parse-layout.log"
+    layout_path = layout_dir / f"{input_pdf.stem}.layout.json"
+    with log_path.open("w", encoding="utf-8") as log_file:
+        with redirect_stdout(log_file), redirect_stderr(log_file):
+            config = parse_pdf_layout(input_pdf)
+            if not no_images:
+                from pdftranslate.image_assets import extract_pdf_image_assets
+
+                config = extract_pdf_image_assets(
+                    input_pdf,
+                    assets_dir=assets_dir / input_pdf.stem / "images",
+                    layout_config=config,
+                    base_dir=layout_dir,
+                )
+    layout_path.write_text(config.to_json(), encoding="utf-8")
 
 
 def _prepare_batches(
@@ -263,21 +275,22 @@ def _build_pdf(
     translated_layout: Path,
     output_pdf: Path,
     debug_boxes: bool,
+    *,
+    asset_base_dir: Path,
     log_dir: Path,
 ) -> None:
-    command = [
-        "uv",
-        "run",
-        "pdftranslate",
-        "build-pdf",
-        str(translated_layout),
-        "--output",
-        str(output_pdf),
-        "--allow-missing-translations",
-    ]
-    if debug_boxes:
-        command.append("--debug-boxes")
-    _run(command, log_dir / "build-pdf.log")
+    log_path = log_dir / "build-pdf.log"
+    with log_path.open("w", encoding="utf-8") as log_file:
+        with redirect_stdout(log_file), redirect_stderr(log_file):
+            config = load_layout_config(translated_layout)
+            render_layout_pdf(
+                config,
+                output_pdf,
+                RenderOptions(
+                    debug_boxes=debug_boxes,
+                    asset_base_dir=asset_base_dir,
+                ),
+            )
 
 
 def _validate_responses(manifest_path: Path, batch_dir: Path) -> None:
